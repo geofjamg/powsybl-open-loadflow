@@ -12,13 +12,15 @@ import com.powsybl.iidm.network.*;
 import com.powsybl.iidm.network.extensions.GeneratorFortescueAdder;
 import com.powsybl.iidm.network.extensions.LineFortescueAdder;
 import com.powsybl.iidm.network.extensions.LoadAsymmetricalAdder;
+import com.powsybl.iidm.network.extensions.TwoWindingsTransformerFortescueAdder;
+import com.powsybl.iidm.network.extensions.WindingConnectionType;
 
 /**
  * Factory for the IEEE 13-bus test feeder (Kersting, "Distribution System Modeling and Analysis", 4th ed.).
  *
  * <p>The feeder operates at 4.16 kV (line-to-line) and is used to exercise the asymmetric
- * (Fortescue-based) AC load-flow implementation. Transformers (Bus 633 → Bus 634) and
- * delta-connected loads are deliberately omitted because these features are not yet supported.
+ * (Fortescue-based) AC load-flow implementation.
+ * Delta-connected loads are not yet supported and are omitted.
  *
  * @author Jean-Baptiste Heyberger {@literal <jbheyberger at gmail.com>}
  * @author Geoffroy Jamgotchian {@literal <geoffroy.jamgotchian at gmail.com>}
@@ -27,6 +29,9 @@ public final class Ieee13BusFeeder {
 
     /** Nominal line-to-line voltage of the IEEE 13-bus feeder, in kV. */
     public static final double NOMINAL_VOLTAGE_KV = 4.16;
+
+    /** Nominal voltage of the 480 V bus (Bus 634), in kV. */
+    public static final double NOMINAL_VOLTAGE_634_KV = 0.48;
 
     private Ieee13BusFeeder() {
     }
@@ -50,14 +55,18 @@ public final class Ieee13BusFeeder {
      * @param vlId      the voltage-level id (e.g. "VL650")
      */
     private static VoltageLevel createVoltageLevel(Network network, String substId, String vlId) {
+        return createVoltageLevel(network, substId, vlId, NOMINAL_VOLTAGE_KV);
+    }
+
+    private static VoltageLevel createVoltageLevel(Network network, String substId, String vlId, double nominalV) {
         Substation substation = network.newSubstation()
                 .setId(substId)
                 .add();
         return substation.newVoltageLevel()
                 .setId(vlId)
-                .setNominalV(NOMINAL_VOLTAGE_KV)
+                .setNominalV(nominalV)
                 .setLowVoltageLimit(0)
-                .setHighVoltageLimit(10)
+                .setHighVoltageLimit(nominalV * 2)
                 .setTopologyKind(TopologyKind.BUS_BREAKER)
                 .add();
     }
@@ -173,9 +182,9 @@ public final class Ieee13BusFeeder {
      * Loads: distributed load at Bus 633 (balanced), spot load at Bus 671 (balanced),
      * and unbalanced wye load at Bus 675 (with Fortescue extension).
      *
-     * <p>The 4.16 kV/0.48 kV transformer between Bus 633 and Bus 634 is <em>not</em> modelled
-     * (asymmetric load flow does not yet support two-winding transformers).
-     * Delta-connected loads are also omitted (not supported).
+     * <p>Also includes Bus 634 (0.48 kV) and the 4.16 kV/0.48 kV transformer T633_634
+     * (500 kVA, YG-YG, %R=1.1%, %X=2%) with its three-phase wye load.
+     * Delta-connected loads are omitted (not yet supported).
      */
     public static Network createBackbone() {
         Network network = Network.create("ieee13-backbone", "ieee13");
@@ -208,6 +217,18 @@ public final class Ieee13BusFeeder {
         VoltageLevel vl675 = createVoltageLevel(network, "S675", "VL675");
         Bus b675 = vl675.getBusBreakerView().newBus().setId("B675").add();
         b675.setV(NOMINAL_VOLTAGE_KV).setAngle(0.0);
+
+        // VL634 is added to S633 (IIDM requires both TWT windings in the same substation)
+        Substation s633 = network.getSubstation("S633");
+        VoltageLevel vl634 = s633.newVoltageLevel()
+                .setId("VL634")
+                .setNominalV(NOMINAL_VOLTAGE_634_KV)
+                .setLowVoltageLimit(0)
+                .setHighVoltageLimit(NOMINAL_VOLTAGE_634_KV * 2)
+                .setTopologyKind(TopologyKind.BUS_BREAKER)
+                .add();
+        Bus b634 = vl634.getBusBreakerView().newBus().setId("B634").add();
+        b634.setV(NOMINAL_VOLTAGE_634_KV).setAngle(0.0);
 
         // --- Slack generator at Bus 650 ---
         Generator gen650 = vl650.newGenerator()
@@ -266,6 +287,32 @@ public final class Ieee13BusFeeder {
                 ohmsFromMile(C606_R0, 500), ohmsFromMile(C606_X0, 500),
                 false, false, false);
 
+        // 633 → 634 : 500 kVA, 4.16/0.48 kV transformer, YG-YG, %R=1.1%, %X=2%
+        // Zbase (side 2) = 0.48² / 0.5 = 0.4608 Ω → R=0.005069 Ω, X=0.009216 Ω (referred to side 2)
+        // For YG-YG: zero-sequence impedance = positive-sequence impedance
+        TwoWindingsTransformer twt633634 = s633.newTwoWindingsTransformer()
+                .setId("T633_634")
+                .setVoltageLevel1("VL633")
+                .setBus1("B633")
+                .setConnectableBus1("B633")
+                .setVoltageLevel2("VL634")
+                .setBus2("B634")
+                .setConnectableBus2("B634")
+                .setRatedU1(NOMINAL_VOLTAGE_KV)
+                .setRatedU2(NOMINAL_VOLTAGE_634_KV)
+                .setRatedS(0.5)
+                .setR(0.005069)
+                .setX(0.009216)
+                .setG(0.0)
+                .setB(0.0)
+                .add();
+        twt633634.newExtension(TwoWindingsTransformerFortescueAdder.class)
+                .withRz(0.005069)
+                .withXz(0.009216)
+                .withConnectionType1(WindingConnectionType.Y_GROUNDED)
+                .withConnectionType2(WindingConnectionType.Y_GROUNDED)
+                .add();
+
         // --- Loads ---
 
         // Bus 633: small distributed load — balanced (no Fortescue extension needed)
@@ -316,6 +363,15 @@ public final class Ieee13BusFeeder {
                 .withDeltaQc(0.174)
                 .add();
 
+        // Bus 634: balanced 3-phase wye load — 160+j110 kVA/phase → total 0.48 MW + j0.33 MVAR
+        vl634.newLoad()
+                .setId("LOAD_634")
+                .setBus("B634")
+                .setConnectableBus("B634")
+                .setP0(0.48)
+                .setQ0(0.33)
+                .add();
+
         return network;
     }
 
@@ -331,7 +387,6 @@ public final class Ieee13BusFeeder {
      * </ul>
      *
      * <p>Bus 646 has a delta load in the original feeder which is not supported; no load is added.
-     * The 633-634 transformer is also not modelled.
      */
     public static Network createFullFeeder() {
         // Start from the backbone and extend it
