@@ -91,10 +91,13 @@ public class Ieee13BusFeederTest {
         assertTrue(b671.getV() < b632.getV(),
                 "Voltage at B671 must be lower than at B632");
 
-        // Approximate voltage magnitudes with wide tolerance (0.05 kV ~ 1.2 %)
-        assertEquals(4.10, b632.getV(), 0.05, "B632 voltage approx 4.10 kV");
-        assertEquals(4.04, b671.getV(), 0.05, "B671 voltage approx 4.04 kV");
-        assertEquals(4.03, b675.getV(), 0.05, "B675 voltage approx 4.03 kV");
+        // Reference positive-sequence line-to-line voltages from OpenDSS (balanced wye loads only).
+        // Tolerance 0.05 kV (~1.2 %) covers the small deviation due to the OLF slack holding
+        // exactly 4.16 kV whereas OpenDSS sees 4.1568 kV at the source.
+        // OpenDSS reference (balanced case): B632=4.0764 kV, B671=4.0072 kV, B675=3.9937 kV
+        assertEquals(4.0764, b632.getV(), 0.05, "B632 voltage (OpenDSS ref 4.0764 kV)");
+        assertEquals(4.0072, b671.getV(), 0.05, "B671 voltage (OpenDSS ref 4.0072 kV)");
+        assertEquals(3.9937, b675.getV(), 0.05, "B675 voltage (OpenDSS ref 3.9937 kV)");
     }
 
     // -------------------------------------------------------------------------
@@ -126,13 +129,15 @@ public class Ieee13BusFeederTest {
         assertEquals(Ieee13BusFeeder.NOMINAL_VOLTAGE_KV, b650.getV(), 1e-6,
                 "Slack bus B650 must be at nominal voltage in asymmetric mode");
 
-        // Positive-sequence voltages must remain close to balanced reference values
-        assertEquals(4.10, b632.getV(), 0.05,
-                "B632 positive-sequence voltage must stay near 4.10 kV");
-        assertEquals(4.04, b671.getV(), 0.05,
-                "B671 positive-sequence voltage must stay near 4.04 kV");
-        assertEquals(4.03, b675.getV(), 0.05,
-                "B675 positive-sequence voltage must stay near 4.03 kV");
+        // Reference positive-sequence line-to-line voltages from OpenDSS (unbalanced wye loads).
+        // OpenDSS reference (unbalanced case): B632=4.0655 kV, B671=3.9893 kV, B675=3.9759 kV.
+        // Tolerance 0.05 kV covers the OLF/OpenDSS slack-voltage difference (~0.003 kV downstream).
+        assertEquals(4.0655, b632.getV(), 0.05,
+                "B632 positive-sequence voltage (OpenDSS ref 4.0655 kV)");
+        assertEquals(3.9893, b671.getV(), 0.05,
+                "B671 positive-sequence voltage (OpenDSS ref 3.9893 kV)");
+        assertEquals(3.9759, b675.getV(), 0.05,
+                "B675 positive-sequence voltage (OpenDSS ref 3.9759 kV)");
     }
 
     // -------------------------------------------------------------------------
@@ -163,12 +168,13 @@ public class Ieee13BusFeederTest {
         LoadFlowResult result = loadFlowRunner.run(network, parameters);
         assertTrue(result.isFullyConverged(), "Asymmetric load flow must converge");
 
-        // All bus voltages must be physically reasonable (> 3.8 kV)
+        // All bus voltages must be physically reasonable.
+        // OpenDSS reference minimum is Bus 675 at 3.9759 kV; floor set at 3.9 kV with margin.
         for (Bus bus : network.getBusBreakerView().getBuses()) {
             double v = bus.getV();
             assertFalse(Double.isNaN(v), "Voltage at " + bus.getId() + " must not be NaN");
-            assertTrue(v > 3.8,
-                    "Voltage at " + bus.getId() + " must be above 3.8 kV, got " + v + " kV");
+            assertTrue(v > 3.9,
+                    "Voltage at " + bus.getId() + " must be above 3.9 kV, got " + v + " kV");
         }
     }
 
