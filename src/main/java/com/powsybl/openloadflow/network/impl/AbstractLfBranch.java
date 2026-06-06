@@ -415,9 +415,6 @@ public abstract class AbstractLfBranch extends AbstractElement implements LfBran
 
     @Override
     public boolean isAsymmetric() {
-        if (asymLine != null) {
-            return asymLine.getAdmittanceMatrix().isCoupled();
-        }
-        return false;
+        return asymLine != null;
     }
 }

@@ -134,11 +134,11 @@ public abstract class AbstractAsymmetricalClosedBranchCoupledFlowEquationTerm ex
     }
 
     protected double r1() {
-        return 1;
+        return element.getPiModel().getR1();
     }
 
     protected double a1() {
-        return 0;
+        return element.getPiModel().getA1();
     }
 
     protected double r(TwoSides i) {
