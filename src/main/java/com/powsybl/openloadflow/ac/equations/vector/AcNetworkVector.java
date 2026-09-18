@@ -37,6 +37,7 @@ public class AcNetworkVector extends AbstractLfNetworkListener
     private final EquationSystem<AcVariableType, AcEquationType> equationSystem;
     private final AcBusVector busVector;
     private final AcBranchVector branchVector;
+    private final AcShuntVector shuntVector;
     private boolean variablesInvalid = true;
 
     public AcNetworkVector(LfNetwork network, EquationSystem<AcVariableType, AcEquationType> equationSystem,
@@ -45,6 +46,7 @@ public class AcNetworkVector extends AbstractLfNetworkListener
         this.equationSystem = Objects.requireNonNull(equationSystem);
         busVector = new AcBusVector(network.getBuses());
         branchVector = new AcBranchVector(network.getBranches(), creationParameters);
+        shuntVector = new AcShuntVector(network.getShunts());
     }
 
     public AcBusVector getBusVector() {
@@ -53,6 +55,10 @@ public class AcNetworkVector extends AbstractLfNetworkListener
 
     public AcBranchVector getBranchVector() {
         return branchVector;
+    }
+
+    public AcShuntVector getShuntVector() {
+        return shuntVector;
     }
 
     public void startListening() {
@@ -85,6 +91,8 @@ public class AcNetworkVector extends AbstractLfNetworkListener
         Arrays.fill(branchVector.ph1Row, -1);
         Arrays.fill(branchVector.v2Row, -1);
         Arrays.fill(branchVector.ph2Row, -1);
+        Arrays.fill(shuntVector.vRow, -1);
+        Arrays.fill(shuntVector.bRow, -1);
 
         for (Variable<AcVariableType> v : equationSystem.getIndex().getSortedVariablesToFind()) {
             int num = v.getElementNum();
@@ -106,12 +114,17 @@ public class AcNetworkVector extends AbstractLfNetworkListener
                     branchVector.r1Row[num] = branchVector.deriveR1[num] ? row : -1;
                     break;
 
+                case SHUNT_B:
+                    shuntVector.bRow[num] = shuntVector.deriveB[num] ? row : -1;
+                    break;
+
                 default:
                     break;
             }
         }
 
         copyVariablesToBranches();
+        copyVariablesToShunts();
 
         stopwatch.stop();
         LOGGER.debug("AC variable vector update in {} us", stopwatch.elapsed(TimeUnit.MICROSECONDS));
@@ -128,6 +141,14 @@ public class AcNetworkVector extends AbstractLfNetworkListener
             if (branchVector.bus2Num[branchNum] != -1) {
                 branchVector.v2Row[branchNum] = busVector.vRow[branchVector.bus2Num[branchNum]];
                 branchVector.ph2Row[branchNum] = busVector.phRow[branchVector.bus2Num[branchNum]];
+            }
+        }
+    }
+
+    public void copyVariablesToShunts() {
+        for (int shuntNum = 0; shuntNum < shuntVector.getSize(); shuntNum++) {
+            if (shuntVector.busNum[shuntNum] != -1) {
+                shuntVector.vRow[shuntNum] = busVector.vRow[shuntVector.busNum[shuntNum]];
             }
         }
     }
@@ -222,12 +243,46 @@ public class AcNetworkVector extends AbstractLfNetworkListener
         }
     }
 
+    /**
+     * Update all shunt flows and their derivatives.
+     */
+    public void updateShunts(double[] state) {
+        for (int shuntNum = 0; shuntNum < shuntVector.getSize(); shuntNum++) {
+            updateShunt(shuntNum, state);
+        }
+    }
+
+    private void updateShunt(int shuntNum, double[] state) {
+        if (!shuntVector.disabled[shuntNum] && shuntVector.vRow[shuntNum] != -1) {
+            // g is not notified when it changes (and b is only notified when it really changes), so both are re-read
+            // here, which stays a sequential walk of the shunt list
+            LfShunt shunt = shuntVector.shunts[shuntNum];
+            double g = shunt.getG();
+            shuntVector.g[shuntNum] = g;
+            shuntVector.b[shuntNum] = shunt.getB();
+
+            int bRow = shuntVector.bRow[shuntNum];
+            double b = bRow != -1 ? state[bRow] : shuntVector.b[shuntNum];
+            shuntVector.bState[shuntNum] = b;
+
+            double v = state[shuntVector.vRow[shuntNum]];
+
+            shuntVector.p[shuntNum] = ShuntCompensatorActiveFlowEquationTerm.p(v, g);
+            shuntVector.dpdv[shuntNum] = ShuntCompensatorActiveFlowEquationTerm.dpdv(v, g);
+
+            shuntVector.q[shuntNum] = ShuntCompensatorReactiveFlowEquationTerm.q(v, b);
+            shuntVector.dqdv[shuntNum] = ShuntCompensatorReactiveFlowEquationTerm.dqdv(v, b);
+            shuntVector.dqdb[shuntNum] = ShuntCompensatorReactiveFlowEquationTerm.dqdb(v);
+        }
+    }
+
     public void updateNetworkState() {
         Stopwatch stopwatch = Stopwatch.createStarted();
 
         double[] state = equationSystem.getStateVector().get();
         updateBuses(state);
         updateClosedBranches(state);
+        updateShunts(state);
         stopwatch.stop();
         LOGGER.debug("AC network vector update in {} us", stopwatch.elapsed(TimeUnit.MICROSECONDS));
     }
@@ -238,6 +293,8 @@ public class AcNetworkVector extends AbstractLfNetworkListener
             busVector.disabled[element.getNum()] = disabled;
         } else if (element.getType() == ElementType.BRANCH) {
             branchVector.disabled[element.getNum()] = disabled;
+        } else if (element.getType() == ElementType.SHUNT_COMPENSATOR) {
+            shuntVector.disabled[element.getNum()] = disabled;
         }
     }
 
@@ -271,7 +328,12 @@ public class AcNetworkVector extends AbstractLfNetworkListener
 
     @Override
     public void onShuntSusceptanceChange(LfShunt shunt, double b) {
-        // do nothing
+        // susceptance can change outside of a state vector update (contingency, shunt voltage control outer loop,
+        // bus state restore), so the shunt has to be refreshed right away
+        double[] state = equationSystem.getStateVector().get();
+        if (state != null) {
+            updateShunt(shunt.getNum(), state);
+        }
     }
 
     @Override
