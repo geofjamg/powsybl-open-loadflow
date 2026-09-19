@@ -64,7 +64,9 @@ public abstract class AbstractAcSolver implements AcSolver {
         }
         for (var equationArray : equationSystem.getEquationArrays()) {
             for (int column = equationArray.getFirstColumn(); column < equationArray.getFirstColumn() + equationArray.getLength(); column++) {
-                mismatches.add(new MismatchInfo(column, equationArray.getType(), mismatch[column]));
+                // the column can be occupied by the complementary equation of the element, which has another type
+                int elementNum = equationArray.getColumnToElementNum(column);
+                mismatches.add(new MismatchInfo(column, equationArray.getOccupantType(elementNum), mismatch[column]));
             }
         }
         return mismatches;

@@ -18,5 +18,28 @@ public interface EquationSystemListener<V extends Enum<V> & Quantity, E extends 
 
     void onEquationArrayChange(EquationArray<V, E> equationArray, int elementNum, EquationEventType eventType);
 
+    /**
+     * Called when the column of an equation array element changed value without changing structure, which happens when
+     * the element and its complementary equation switch.
+     */
+    default void onEquationArrayValuesChange(EquationArray<V, E> equationArray, int elementNum) {
+        // nothing to do by default
+    }
+
+    /**
+     * Called when an equation array element gained or lost its column because the pair it forms with its complementary
+     * equation became occupied or empty. The variables have already been accounted for by the other events.
+     */
+    default void onEquationArrayColumnChange(EquationArray<V, E> equationArray, int elementNum, EquationEventType eventType) {
+        // nothing to do by default
+    }
+
+    /**
+     * Called when the complementary equation of an equation array element has been activated or deactivated.
+     */
+    default void onComplementaryEquationChange(EquationArray<V, E> equationArray, int elementNum, EquationEventType eventType) {
+        // nothing to do by default
+    }
+
     void onEquationTermArrayChange(EquationTermArray<V, E> equationTermArray, int termNum, EquationTermEventType eventType);
 }

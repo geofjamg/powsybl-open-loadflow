@@ -295,6 +295,23 @@ public class EquationSystem<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         listeners.forEach(listener -> listener.onEquationArrayChange(equationArray, elementNum, eventType));
     }
 
+    void notifyEquationArrayColumnChange(EquationArray<V, E> equationArray, int elementNum, EquationEventType eventType) {
+        Objects.requireNonNull(equationArray);
+        Objects.requireNonNull(eventType);
+        listeners.forEach(listener -> listener.onEquationArrayColumnChange(equationArray, elementNum, eventType));
+    }
+
+    void notifyComplementaryEquationChange(EquationArray<V, E> equationArray, int elementNum, EquationEventType eventType) {
+        Objects.requireNonNull(equationArray);
+        Objects.requireNonNull(eventType);
+        listeners.forEach(listener -> listener.onComplementaryEquationChange(equationArray, elementNum, eventType));
+    }
+
+    void notifyEquationArrayValuesChange(EquationArray<V, E> equationArray, int elementNum) {
+        Objects.requireNonNull(equationArray);
+        listeners.forEach(listener -> listener.onEquationArrayValuesChange(equationArray, elementNum));
+    }
+
     public void write(Writer writer, boolean writeInactiveEquations) {
         try {
             for (SingleEquation<V, E> equation : equations.values().stream().sorted().collect(Collectors.toList())) {

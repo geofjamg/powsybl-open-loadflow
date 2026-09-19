@@ -87,6 +87,86 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
         listeners.forEach(EquationSystemIndexListener::onEquationIndexOrderChanged);
     }
 
+    private void notifyEquationArrayValuesChange(EquationArray<V, E> equationArray) {
+        listeners.forEach(listener -> listener.onEquationArrayValuesChange(equationArray));
+    }
+
+    @Override
+    public void onEquationArrayValuesChange(EquationArray<V, E> equationArray, int elementNum) {
+        // the element keeps its column, shared with its complementary equation, but its variables are reference
+        // counted like the ones of any other equation: a variable that is not referenced anymore has no row, and the
+        // column just has one row less
+        updateEquationArrayElementVariables(equationArray, elementNum, equationArray.isElementActive(elementNum));
+        notifyEquationArrayValuesChange(equationArray);
+    }
+
+    private void updateEquationArrayElementVariables(EquationArray<V, E> equationArray, int elementNum, boolean added) {
+        for (var equationTermArray : equationArray.getTermArrays()) {
+            for (int termNum : equationTermArray.getTermNumsForEquationElementNum(elementNum).toArray()) {
+                if (equationTermArray.isTermActive(termNum)) {
+                    List<Variable<V>> variables = equationTermArray.getTermDerivatives(termNum).stream().map(Derivative::getVariable).toList();
+                    if (added) {
+                        addVariables(variables);
+                    } else {
+                        removeVariables(variables);
+                    }
+                }
+            }
+        }
+        for (var singleTerm : equationArray.getSingleEquationTerms(elementNum)) {
+            if (singleTerm.isActive()) {
+                if (added) {
+                    addVariables(singleTerm.getVariables());
+                } else {
+                    removeVariables(singleTerm.getVariables());
+                }
+            }
+        }
+    }
+
+    @Override
+    public void onEquationArrayColumnChange(EquationArray<V, E> equationArray, int elementNum, EquationEventType eventType) {
+        equationsIndexValid = false;
+        notifyEquationArrayChange(equationArray, eventType == EquationEventType.EQUATION_ACTIVATED
+                ? EquationSystemIndexListener.ChangeType.ADDED : EquationSystemIndexListener.ChangeType.REMOVED);
+    }
+
+    @Override
+    public void onComplementaryEquationChange(EquationArray<V, E> equationArray, int elementNum, EquationEventType eventType) {
+        // the complementary equation is not in the sorted equation set, it shares the column of its paired element,
+        // but its variables are reference counted like the ones of any other equation
+        SingleEquation<V, E> complementary = equationArray.getComplementaryEquation(elementNum);
+        boolean activated = eventType == EquationEventType.EQUATION_ACTIVATED;
+        for (SingleEquationTerm<V, E> term : complementary.getTerms()) {
+            if (term.isActive()) {
+                if (activated) {
+                    addVariables(term.getVariables());
+                } else {
+                    removeVariables(term.getVariables());
+                }
+            }
+        }
+        notifyEquationArrayValuesChange(equationArray);
+    }
+
+    /**
+     * Notify the pending structure changes of the complementary equation pairs. Has to be called before anything reads
+     * the index or the Jacobian matrix status, because a pair switch is notified as a value change first and is only
+     * known to be a structure change once both activation changes of the switch have been done.
+     */
+    private void syncEquationArrays() {
+        for (EquationArray<V, E> equationArray : equationSystem.getEquationArrays()) {
+            equationArray.syncPairedElements();
+        }
+    }
+
+    /**
+     * Make sure the index is up to date, including the pending complementary equation switches.
+     */
+    public void ensureUpdated() {
+        update();
+    }
+
     private void updateEquationColumns(Collection<SingleEquation<V, E>> singleEquations, Collection<EquationArray<V, E>> equationArrays) {
         for (SingleEquation<V, E> equation : singleEquations) {
             equation.setColumn(columnCount++);
@@ -161,6 +241,7 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
     }
 
     private void update() {
+        syncEquationArrays();
         if (!equationsIndexValid) {
             updateEquationsToSolve();
         }
@@ -394,6 +475,11 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
             if (column >= equationArray.getFirstColumn()
                     && column < equationArray.getFirstColumn() + equationArray.getLength()) {
                 int elementNum = equationArray.getColumnToElementNum(column);
+                // the column can be occupied by the complementary equation of the element
+                SingleEquation<V, E> complementary = equationArray.getComplementaryEquation(elementNum);
+                if (complementary != null && complementary.isActive()) {
+                    return complementary;
+                }
                 return equationArray.getElement(elementNum);
             }
             equationsFromArrayExplored += equationArray.getLength();

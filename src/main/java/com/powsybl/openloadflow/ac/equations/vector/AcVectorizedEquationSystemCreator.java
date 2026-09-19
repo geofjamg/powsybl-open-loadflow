@@ -11,6 +11,8 @@ import com.powsybl.openloadflow.ac.equations.*;
 import com.powsybl.openloadflow.equations.*;
 import com.powsybl.openloadflow.network.*;
 
+import java.util.List;
+
 /**
  * @author Geoffroy Jamgotchian <geoffroy.jamgotchian at rte-france.com>
  */
@@ -30,12 +32,62 @@ public class AcVectorizedEquationSystemCreator extends AcEquationSystemCreator {
 
     private EquationTermArray<AcVariableType, AcEquationType> shuntQArray;
 
+    private EquationArray<AcVariableType, AcEquationType> qArray;
+
+    /**
+     * Pair the voltage target equation of a bus with the reactive power target equation of the same bus: they are
+     * complementary (a PV/PQ switch activates one and deactivates the other), so they can share a column and the
+     * switch does not change the Jacobian structure anymore.
+     */
+    private static final boolean COMPLEMENTARY_VQ = Boolean.parseBoolean(System.getProperty("olf.complementaryVq", "true"));
+
+    private final boolean complementaryEquations;
+
     public AcVectorizedEquationSystemCreator(LfNetwork network) {
         this(network, new AcEquationSystemCreationParameters());
     }
 
     public AcVectorizedEquationSystemCreator(LfNetwork network, AcEquationSystemCreationParameters creationParameters) {
+        this(network, creationParameters, true);
+    }
+
+    public AcVectorizedEquationSystemCreator(LfNetwork network, AcEquationSystemCreationParameters creationParameters,
+                                             boolean complementaryEquations) {
         super(network, creationParameters);
+        this.complementaryEquations = complementaryEquations;
+    }
+
+    @Override
+    protected void onBusEquationsCreated(LfBus bus, EquationSystem<AcVariableType, AcEquationType> equationSystem) {
+        if (COMPLEMENTARY_VQ && complementaryEquations && isVoltageTargetComplementaryWithReactiveTarget(bus)
+                && equationSystem.getEquation(bus.getNum(), AcEquationType.BUS_TARGET_V).orElseThrow()
+                        instanceof SingleEquation<AcVariableType, AcEquationType> vEq) {
+            qArray.setComplementaryEquation(bus.getNum(), vEq);
+        }
+    }
+
+    /**
+     * The voltage target equation of a bus and its reactive power target equation are strictly complementary (exactly
+     * one of the two is active at a time) only when the bus is controlled in voltage by its own generators alone: a
+     * PV/PQ switch then activates one and deactivates the other. With a remote control the voltage target equation is
+     * at the controlled bus while the reactive power target equations are at the controller buses, so both equations
+     * of a same bus can be active at the same time and they cannot share a column.
+     */
+    private static boolean isVoltageTargetComplementaryWithReactiveTarget(LfBus bus) {
+        if (bus.hasGeneratorsWithSlope() || bus.hasGeneratorReactivePowerControl()) {
+            // extra terms in the voltage target equation, or another control driving the reactive power target equation
+            return false;
+        }
+        List<VoltageControl<?>> voltageControls = bus.getVoltageControls();
+        if (voltageControls.size() != 1) {
+            return false;
+        }
+        VoltageControl<?> voltageControl = voltageControls.get(0);
+        return voltageControl.getType() == VoltageControl.Type.GENERATOR
+                && voltageControl.getMergeStatus() == VoltageControl.MergeStatus.MAIN
+                && voltageControl.getControlledBus() == bus
+                && voltageControl.getMergedControlledBuses().size() == 1
+                && voltageControl.getMergedControllerElements().equals(List.of(bus));
     }
 
     @Override
@@ -43,7 +95,7 @@ public class AcVectorizedEquationSystemCreator extends AcEquationSystemCreator {
         networkVector = new AcNetworkVector(network, equationSystem, creationParameters);
 
         EquationArray<AcVariableType, AcEquationType> pArray = equationSystem.createEquationArray(AcEquationType.BUS_TARGET_P);
-        EquationArray<AcVariableType, AcEquationType> qArray = equationSystem.createEquationArray(AcEquationType.BUS_TARGET_Q);
+        qArray = equationSystem.createEquationArray(AcEquationType.BUS_TARGET_Q);
 
         closedP1Array = new EquationTermArray<>(ElementType.BRANCH,
             new ClosedBranchSide1ActiveFlowEquationTermArrayEvaluator(networkVector.getBranchVector(), networkVector.getBusVector(), equationSystem.getVariableSet()));

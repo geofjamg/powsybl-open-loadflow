@@ -69,8 +69,17 @@ public class AcEquationSystemCreator {
                 .setActive(false);
         bus.setCalculatedV(vTerm);
 
+        onBusEquationsCreated(bus, equationSystem);
+
         createShuntEquations(bus, equationSystem);
         createLoadEquations(bus, equationSystem);
+    }
+
+    /**
+     * Called once the P, Q and V equations of a bus have been created, to let a specialized creator relate them.
+     */
+    protected void onBusEquationsCreated(LfBus bus, EquationSystem<AcVariableType, AcEquationType> equationSystem) {
+        // nothing to do
     }
 
     protected void createDcBusEquation(LfDcBus dcBus,

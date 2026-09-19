@@ -159,9 +159,10 @@ public class AcTargetVector extends TargetVector<AcVariableType, AcEquationType>
 
     public static void init(EquationArray<AcVariableType, AcEquationType> equationArray, LfNetwork network, double[] targets) {
         for (int elementNum = 0; elementNum < equationArray.getElementCount(); elementNum++) {
-            if (equationArray.isElementActive(elementNum)) {
-                int column = equationArray.getElementNumToColumn(elementNum);
-                init(equationArray.getType(), column, elementNum, network, targets);
+            int column = equationArray.getElementNumToColumn(elementNum);
+            if (column != -1) {
+                // the column can be occupied by the complementary equation of the element
+                init(equationArray.getOccupantType(elementNum), column, elementNum, network, targets);
             }
         }
     }

@@ -49,6 +49,11 @@ public abstract class AbstractVector<V extends Enum<V> & Quantity, E extends Enu
         }
 
         @Override
+        public void onEquationArrayValuesChange(EquationArray<V, E> equationArray) {
+            invalidateValues();
+        }
+
+        @Override
         public void onEquationTermArrayChange(EquationTermArray<V, E> equationTermArray, int termNum, ChangeType changeType) {
             // nothing to do
         }
@@ -80,6 +85,8 @@ public abstract class AbstractVector<V extends Enum<V> & Quantity, E extends Enu
 
     @Override
     public double[] getArray() {
+        // flush the pending complementary equation switches first, they may be structure changes
+        equationSystem.getIndex().ensureUpdated();
         switch (status) {
             case VECTOR_INVALID:
                 array = createArray();

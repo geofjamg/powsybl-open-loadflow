@@ -91,6 +91,11 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
     }
 
     @Override
+    public void onEquationArrayValuesChange(EquationArray<V, E> equationArray) {
+        updateStatus(Status.VALUES_AND_ZEROS_INVALID);
+    }
+
+    @Override
     public void onEquationIndexOrderChanged() {
         updateStatus(Status.STRUCTURE_INVALID);
     }
@@ -211,6 +216,9 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
     }
 
     private void update() {
+        // flush the pending complementary equation switches first, so that the ones that turned out to be a real
+        // structure change are taken into account before choosing what to update
+        equationSystem.getIndex().ensureUpdated();
         if (status != Status.VALID) {
             switch (status) {
                 case STRUCTURE_INVALID:

@@ -12,6 +12,7 @@ import com.powsybl.openloadflow.ac.equations.AcEquationType;
 import com.powsybl.openloadflow.ac.equations.AcVariableType;
 import com.powsybl.openloadflow.ac.equations.asym.AsymmetricalAcEquationSystemCreator;
 import com.powsybl.openloadflow.ac.equations.vector.AcVectorizedEquationSystemCreator;
+import com.powsybl.openloadflow.ac.solver.FastDecoupledFactory;
 import com.powsybl.openloadflow.equations.EquationSystem;
 import com.powsybl.openloadflow.equations.EquationVector;
 import com.powsybl.openloadflow.equations.JacobianMatrix;
@@ -53,7 +54,9 @@ public class AcLoadFlowContext extends AbstractLoadFlowContext<AcVariableType, A
     }
 
     private AcEquationSystemCreator createAcEquationSystemCreator() {
-        return parameters.isVectorized() ? new AcVectorizedEquationSystemCreator(network, parameters.getEquationSystemCreationParameters())
+        // complementary V/Q equations are not supported yet by the fast decoupled Jacobian matrices
+        boolean complementaryEquations = !(parameters.getSolverFactory() instanceof FastDecoupledFactory);
+        return parameters.isVectorized() ? new AcVectorizedEquationSystemCreator(network, parameters.getEquationSystemCreationParameters(), complementaryEquations)
                                          : new AcEquationSystemCreator(network, parameters.getEquationSystemCreationParameters());
     }
 

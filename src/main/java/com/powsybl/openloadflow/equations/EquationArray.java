@@ -62,6 +62,10 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     private SingleEquationTerm<V, E>[] evalSingleTerms;
     private int[] evalSingleTermColumns;
 
+    // Same thing for the complementary equations that currently occupy the column of their paired element.
+    private SingleEquation<V, E>[] evalComplementaryEquations;
+    private int[] evalComplementaryColumns;
+
     // Flat view of the single terms used by der(): for each equation element, the [start, end[ range of its distinct
     // derivative variables in singleTermDerVariables, and for each of those variables the terms depending on it.
     private int[] singleTermDerVariableRanges;
@@ -122,6 +126,19 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     // reusable buffer, to avoid allocating one per equation having single terms at each der() call
     private int[] computedRowsBuffer;
 
+    // Complementary equations: a single equation paired with an element of this array, both sharing the same column,
+    // with the invariant that at most one of the two is active at a time (a PV/PQ switch is such a pair: BUS_TARGET_V
+    // and BUS_TARGET_Q of a same bus). The column stays allocated as long as one of the two is active, and the matrix
+    // structure of that column is the union of the two patterns, so toggling the pair is only a value change: no
+    // column renumbering, no Jacobian structure rebuild and no symbolic LU factorization.
+    private SingleEquation<V, E>[] complementaryEquations;
+    private boolean[] complementaryActive;
+    private Variable<V>[] complementaryVariables;
+    // occupancy of each paired slot as of the last column allocation, to detect the changes that are real structure
+    // changes (both equations of the pair becoming inactive, or the slot being re-occupied)
+    private boolean[] allocatedOccupied;
+    private TIntArrayList pairedDirtyElements;
+
     public EquationArray(E type, int elementCount, EquationSystem<V, E> equationSystem) {
         this.type = Objects.requireNonNull(type);
         this.elementCount = elementCount;
@@ -154,10 +171,19 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             elementNumToColumn = new int[elementCount];
             int column = firstColumn;
             for (int elementNum = 0; elementNum < elementCount; elementNum++) {
-                if (elementActive[elementNum]) {
+                // the allocated occupancy, not the live one: it is what length was computed from, the two have to
+                // stay consistent. They are brought back together by syncPairedElements().
+                if (allocatedOccupied == null ? elementActive[elementNum] : allocatedOccupied[elementNum]) {
                     elementNumToColumn[elementNum] = column++;
                 } else {
                     elementNumToColumn[elementNum] = -1;
+                }
+                if (allocatedOccupied != null) {
+                    SingleEquation<V, E> complementary = complementaryEquations[elementNum];
+                    if (complementary != null) {
+                        // keep the paired single equation column in sync, it is part of the equation API
+                        complementary.setColumn(complementaryActive[elementNum] ? elementNumToColumn[elementNum] : -1);
+                    }
                 }
             }
         }
@@ -193,6 +219,8 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         evalScatterColumns = null;
         evalSingleTerms = null;
         evalSingleTermColumns = null;
+        evalComplementaryEquations = null;
+        evalComplementaryColumns = null;
     }
 
     public EquationSystem<V, E> getEquationSystem() {
@@ -219,6 +247,13 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     public void setElementActive(int elementNum, boolean active) {
         if (active != this.elementActive[elementNum]) {
             this.elementActive[elementNum] = active;
+            if (isPaired(elementNum)) {
+                onPairedActivationChange(elementNum);
+                return;
+            }
+            if (allocatedOccupied != null) {
+                allocatedOccupied[elementNum] = active;
+            }
             if (active) {
                 length++;
             } else {
@@ -227,6 +262,139 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             invalidateElementNumToColumn();
             equationSystem.notifyEquationArrayChange(this, elementNum,
                     active ? EquationEventType.EQUATION_ACTIVATED : EquationEventType.EQUATION_DEACTIVATED);
+        }
+    }
+
+    /**
+     * Pair {@code equation} with the element {@code elementNum} of this array: both share the same column and at most
+     * one of the two is active at a time. The equation must be inactive and have a single derivative variable.
+     */
+    @SuppressWarnings("unchecked")
+    public void setComplementaryEquation(int elementNum, SingleEquation<V, E> equation) {
+        Objects.requireNonNull(equation);
+        if (equation.isActive()) {
+            throw new PowsyblException("A complementary equation has to be inactive when it is paired: " + equation);
+        }
+        Set<Variable<V>> variables = equation.getTermsByVariable().keySet();
+        if (variables.size() != 1) {
+            throw new PowsyblException("Only single variable complementary equations are supported: " + equation);
+        }
+        if (complementaryEquations == null) {
+            complementaryEquations = new SingleEquation[elementCount];
+            complementaryActive = new boolean[elementCount];
+            complementaryVariables = new Variable[elementCount];
+            allocatedOccupied = Arrays.copyOf(elementActive, elementCount);
+            pairedDirtyElements = new TIntArrayList();
+        }
+        complementaryEquations[elementNum] = equation;
+        complementaryVariables[elementNum] = variables.iterator().next();
+        complementaryActive[elementNum] = false;
+        equation.setComplementaryArray(this);
+        invalidateElementNumToColumn();
+    }
+
+    public boolean isPaired(int elementNum) {
+        return complementaryEquations != null && complementaryEquations[elementNum] != null;
+    }
+
+    private boolean isElementOccupied(int elementNum) {
+        return elementActive[elementNum] || complementaryActive != null && complementaryActive[elementNum];
+    }
+
+    /**
+     * The type of the equation that currently occupies the column of {@code elementNum}: the type of this array,
+     * or the type of the complementary equation when the pair has switched to it.
+     */
+    public E getOccupantType(int elementNum) {
+        return complementaryActive != null && complementaryActive[elementNum]
+                ? complementaryEquations[elementNum].getType()
+                : type;
+    }
+
+    void setComplementaryActive(int elementNum, boolean active) {
+        if (active != complementaryActive[elementNum]) {
+            complementaryActive[elementNum] = active;
+            pairedDirtyElements.add(elementNum);
+            invalidateEvalScatterIndexes();
+            equationSystem.notifyComplementaryEquationChange(this, elementNum,
+                    active ? EquationEventType.EQUATION_ACTIVATED : EquationEventType.EQUATION_DEACTIVATED);
+        }
+    }
+
+    public SingleEquation<V, E> getComplementaryEquation(int elementNum) {
+        return complementaryEquations == null ? null : complementaryEquations[elementNum];
+    }
+
+    /**
+     * Undo the pairing of an element, permanently: the complementary equation goes back to being an ordinary single
+     * equation with its own column. Used as a fallback when the two equations turn out not to be complementary.
+     */
+    private void unpair(int elementNum) {
+        SingleEquation<V, E> complementary = complementaryEquations[elementNum];
+        boolean wasActive = complementaryActive[elementNum];
+        if (wasActive) {
+            // give its variables back to the index before it forgets about the pairing
+            equationSystem.notifyComplementaryEquationChange(this, elementNum, EquationEventType.EQUATION_DEACTIVATED);
+        }
+        complementaryEquations[elementNum] = null;
+        complementaryVariables[elementNum] = null;
+        complementaryActive[elementNum] = false;
+        complementary.setComplementaryArray(null);
+        complementary.setColumn(-1);
+        if (allocatedOccupied[elementNum] != elementActive[elementNum]) {
+            allocatedOccupied[elementNum] = elementActive[elementNum];
+            length += elementActive[elementNum] ? 1 : -1;
+        }
+        invalidateElementNumToColumn();
+        invalidateEvalScatterIndexes();
+        if (wasActive) {
+            // and let it be indexed as an ordinary equation
+            equationSystem.notifyEquationChange(complementary, EquationEventType.EQUATION_ACTIVATED);
+        }
+    }
+
+    private void onPairedActivationChange(int elementNum) {
+        pairedDirtyElements.add(elementNum);
+        invalidateEvalScatterIndexes();
+        // As long as the slot stays occupied the column and the matrix structure do not change, only the values and
+        // their zero pattern do. Whether it is a real structure change is decided later, in syncPairedElements(),
+        // because the two activation changes of a switch are notified one after the other and the slot can be
+        // transiently empty in between.
+        equationSystem.notifyEquationArrayValuesChange(this, elementNum);
+    }
+
+    /**
+     * Notify the structure changes of the paired elements that survived the pending activation changes: a slot that
+     * became empty, or an empty slot that got occupied again. A slot that just switched from one equation of the pair
+     * to the other is not a structure change and is not notified.
+     */
+    void syncPairedElements() {
+        if (pairedDirtyElements == null || pairedDirtyElements.isEmpty()) {
+            return;
+        }
+        int[] dirtyElements = pairedDirtyElements.toArray();
+        pairedDirtyElements.resetQuick();
+        for (int elementNum : dirtyElements) {
+            if (elementActive[elementNum] && complementaryActive[elementNum]) {
+                // the two equations are not complementary anymore, which can happen when a contingency changes the
+                // voltage control structure: give the complementary equation its own column back
+                unpair(elementNum);
+                continue;
+            }
+            boolean occupied = isElementOccupied(elementNum);
+            if (occupied != allocatedOccupied[elementNum]) {
+                allocatedOccupied[elementNum] = occupied;
+                if (occupied) {
+                    length++;
+                } else {
+                    length--;
+                }
+                invalidateElementNumToColumn();
+                // only the column layout changes here, the variables of the element and of its complementary equation
+                // have already been reference counted when their activation changed
+                equationSystem.notifyEquationArrayColumnChange(this, elementNum,
+                        occupied ? EquationEventType.EQUATION_ACTIVATED : EquationEventType.EQUATION_DEACTIVATED);
+            }
         }
     }
 
@@ -397,7 +565,7 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         if (evalScatterTermElementNums != null) {
             return;
         }
-        int[] elementNumToColumnArray = getElementNumToColumn();
+        int[] elementNumToColumnArray = getEvalScatterColumns();
         int termArrayCount = termArrays.size();
         evalScatterTermElementNums = new int[termArrayCount][];
         evalScatterColumns = new int[termArrayCount][];
@@ -439,6 +607,47 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         }
         evalSingleTerms = singleTerms.toArray(new SingleEquationTerm[0]);
         evalSingleTermColumns = singleTermColumns.toArray();
+
+        updateEvalComplementaryIndexes();
+    }
+
+    /**
+     * Columns to scatter the terms of this array to: the column of the element, or -1 when the element is inactive or
+     * when its column is currently occupied by its complementary equation (the terms of this array do not contribute
+     * to the column in that case).
+     */
+    private int[] getEvalScatterColumns() {
+        int[] columns = getElementNumToColumn();
+        if (complementaryActive == null) {
+            return columns;
+        }
+        int[] scatterColumns = Arrays.copyOf(columns, elementCount);
+        for (int elementNum = 0; elementNum < elementCount; elementNum++) {
+            if (complementaryActive[elementNum]) {
+                scatterColumns[elementNum] = -1;
+            }
+        }
+        return scatterColumns;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void updateEvalComplementaryIndexes() {
+        if (complementaryActive == null) {
+            evalComplementaryEquations = new SingleEquation[0];
+            evalComplementaryColumns = new int[0];
+            return;
+        }
+        int[] elementNumToColumnArray = getElementNumToColumn();
+        List<SingleEquation<V, E>> equations = new ArrayList<>();
+        TIntArrayList columns = new TIntArrayList();
+        for (int elementNum = 0; elementNum < elementCount; elementNum++) {
+            if (complementaryActive[elementNum]) {
+                equations.add(complementaryEquations[elementNum]);
+                columns.add(elementNumToColumnArray[elementNum]);
+            }
+        }
+        evalComplementaryEquations = equations.toArray(new SingleEquation[0]);
+        evalComplementaryColumns = columns.toArray();
     }
 
     public void eval(double[] values) {
@@ -457,6 +666,9 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             if (singleTerm.isActive()) {
                 values[evalSingleTermColumns[i]] += singleTerm.eval();
             }
+        }
+        for (int i = 0; i < evalComplementaryEquations.length; i++) {
+            values[evalComplementaryColumns[i]] += evalComplementaryEquations[i].evalLhs();
         }
     }
 
@@ -551,18 +763,20 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         // process column by column so equation by equation of the array
         int valueIndex = 0;
         for (int elementNum = 0; elementNum < elementCount; elementNum++) {
-            // skip inactive elements
-            if (!elementActive[elementNum]) {
+            // skip elements that have no column (neither the element nor its complementary equation is active)
+            int column = elementNumToColumnArray[elementNum];
+            if (column == -1) {
                 continue;
             }
 
-            int column = elementNumToColumnArray[elementNum];
             // for each equation of the array we already have the list of terms to derive and its variable sorted
             // by variable row (required by solvers)
             int iStart = this.equationDerivativeVectorStartIndices[elementNum];
             int iEnd = this.equationDerivativeVectorStartIndices[elementNum + 1];
 
-            if (hasSingleEquationTerms[elementNum]) {
+            if (isPaired(elementNum)) {
+                valueIndex = derPaired(handler, elementNum, column, iStart, iEnd, rows, values, valueIndex);
+            } else if (hasSingleEquationTerms[elementNum]) {
                 valueIndex = derWithSingleTerms(handler, elementNum, column, iStart, iEnd, rows, values, valueIndex);
             } else {
                 // fast path: only vectorized terms, values of a same row are contiguous and just have to be summed
@@ -589,6 +803,96 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
                 }
             }
         }
+    }
+
+    /**
+     * Derivatives of a column shared by an element of this array and its complementary equation. The same rows are
+     * always notified, whichever of the two is active: the union of the two patterns, which is the pattern of this
+     * array element plus, when it is not already one of its rows, the row of the complementary equation variable.
+     * Keeping the notified rows identical in both modes is what makes the switch a value only change for the solver.
+     * The contribution of the equation that is not active is zero.
+     */
+    private int derPaired(DerHandler handler, int elementNum, int column, int iStart, int iEnd,
+                          int[] rows, double[] values, int startValueIndex) {
+        int valueIndex = startValueIndex;
+        boolean complementary = complementaryActive[elementNum];
+        Variable<V> complementaryVariable = complementaryVariables[elementNum];
+        int complementaryRow = complementaryVariable.getRow();
+        double complementaryValue = 0;
+        if (complementary) {
+            for (EquationTerm<V, E> term : complementaryEquations[elementNum].<EquationTerm<V, E>>getTerms()) {
+                if (term.isActive()) {
+                    complementaryValue += term.der(complementaryVariable);
+                }
+            }
+        }
+        boolean complementaryRowDone = complementaryRow == -1;
+
+        int vStart = singleTermDerVariableRanges[elementNum];
+        int vEnd = singleTermDerVariableRanges[elementNum + 1];
+        for (int j = vStart; j < vEnd; j++) {
+            singleTermDerVariableRows[j] = singleTermDerVariables[j].getRow();
+        }
+        int[] computedRows = getComputedRowsBuffer(iEnd - iStart + 1);
+        int computedRowCount = 0;
+
+        double value = 0;
+        int prevRow = -1;
+        for (int i = iStart; i < iEnd; i++) {
+            int row = rows[i];
+            // a variable of the array element can have been removed from the index while the column is occupied by
+            // the complementary equation, it has no row anymore and so no matrix element
+            if (row == -1) {
+                continue;
+            }
+            if (prevRow != -1 && row != prevRow) {
+                computedRows[computedRowCount++] = prevRow;
+                value += evalSingleTermsDer(vStart, vEnd, prevRow);
+                valueIndex = onDer(handler, column, prevRow,
+                        pairedValue(value, complementary, prevRow, complementaryRow, complementaryValue), valueIndex);
+                complementaryRowDone |= prevRow == complementaryRow;
+                value = 0;
+            }
+            prevRow = row;
+            value += values[i];
+        }
+        if (prevRow != -1) {
+            computedRows[computedRowCount++] = prevRow;
+            value += evalSingleTermsDer(vStart, vEnd, prevRow);
+            valueIndex = onDer(handler, column, prevRow,
+                    pairedValue(value, complementary, prevRow, complementaryRow, complementaryValue), valueIndex);
+            complementaryRowDone |= prevRow == complementaryRow;
+        }
+
+        // single terms with a variable that has not been seen in the vectorized terms
+        for (int j = vStart; j < vEnd; j++) {
+            int row = singleTermDerVariableRows[j];
+            if (row != -1 && !contains(computedRows, computedRowCount, row)) {
+                value = 0;
+                for (var term : singleTermDerTerms[j]) {
+                    if (term.isActive()) {
+                        value += term.der(singleTermDerVariables[j]);
+                    }
+                }
+                valueIndex = onDer(handler, column, row,
+                        pairedValue(value, complementary, row, complementaryRow, complementaryValue), valueIndex);
+                complementaryRowDone |= row == complementaryRow;
+            }
+        }
+
+        // the complementary equation variable is not one of the rows of this array element: it is an extra row of the
+        // union, always notified so that the structure of the column does not depend on which equation is active
+        if (!complementaryRowDone) {
+            valueIndex = onDer(handler, column, complementaryRow, complementary ? complementaryValue : 0, valueIndex);
+        }
+        return valueIndex;
+    }
+
+    private static double pairedValue(double value, boolean complementary, int row, int complementaryRow, double complementaryValue) {
+        if (!complementary) {
+            return value;
+        }
+        return row == complementaryRow ? complementaryValue : 0;
     }
 
     private int derWithSingleTerms(DerHandler handler, int elementNum, int column, int iStart, int iEnd,

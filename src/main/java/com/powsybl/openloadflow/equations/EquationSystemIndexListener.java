@@ -34,6 +34,14 @@ public interface EquationSystemIndexListener<V extends Enum<V> & Quantity, E ext
 
     void onEquationArrayChange(EquationArray<V, E> equationArray, ChangeType changeType);
 
+    /**
+     * Called when an equation array element and its complementary equation switched: the column and the matrix
+     * structure are unchanged, only the values are.
+     */
+    default void onEquationArrayValuesChange(EquationArray<V, E> equationArray) {
+        // nothing to do by default
+    }
+
     void onEquationTermArrayChange(EquationTermArray<V, E> equationTermArray, int termNum, ChangeType changeType);
 
     /**

@@ -133,6 +133,10 @@ class EquationArrayTest {
      * not depend on it, but the order of stacking the values in the sparse structure is impacted). This test ensures
      * the order is always the same. (If not, very small non-reproducible numerical errors (10^-12) can occur during
      * Sparse LU decomposition)
+     *
+     * <p>The voltage target equations of the locally voltage controlled buses share the column of the reactive power
+     * target equation of the same bus, so those columns hold the union of the two patterns, which is the reactive
+     * power target equation pattern. This is why they have more than a single element.
      */
     @Test
     void testSparseReproducibility() {
@@ -141,9 +145,13 @@ class EquationArrayTest {
 
         try (var acContext = new AcLoadFlowContext(lfNetwork, new AcLoadFlowParameters().setMatrixFactory(new SparseMatrixFactory()))) {
             acContext.getJacobianMatrix().initDer();
-            int[] expectedRowIndices = {0, 1, 6, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            int[] expectedRowIndices = {
+                1, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 4, 5, 6, 7, 0, 1, 2, 3,
+                4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 4, 5, 6, 7, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
             int[] rowIndices = ((SparseMatrix) acContext.getJacobianMatrix().matrix).getRowIndices();
-            int[] expectedColumnStarts = {0, 1, 2, 3, 9, 17, 23, 29, 37};
+            int[] expectedColumnStarts = {0, 1, 7, 15, 21, 29, 35, 43, 49};
             int[] columnStarts = ((SparseMatrix) acContext.getJacobianMatrix().matrix).getColumnStart();
             assertArrayEquals(expectedRowIndices, rowIndices);
             assertArrayEquals(expectedColumnStarts, columnStarts);

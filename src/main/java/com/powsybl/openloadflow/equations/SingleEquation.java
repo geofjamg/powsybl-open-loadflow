@@ -46,6 +46,12 @@ public class SingleEquation<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
      */
     private int[] matrixElementIndexes;
 
+    /**
+     * Set when this equation is the complementary equation of an element of an equation array: both share the same
+     * column and at most one of the two is active at a time. Activation changes are then routed to the array.
+     */
+    private EquationArray<V, E> complementaryArray;
+
     SingleEquation(int elementNum, E type, EquationSystem<V, E> equationSystem) {
         this.elementNum = elementNum;
         this.type = Objects.requireNonNull(type);
@@ -97,8 +103,16 @@ public class SingleEquation<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         checkNotRemoved();
         if (active != this.active) {
             this.active = active;
-            equationSystem.notifyEquationChange(this, active ? EquationEventType.EQUATION_ACTIVATED : EquationEventType.EQUATION_DEACTIVATED);
+            if (complementaryArray != null) {
+                complementaryArray.setComplementaryActive(elementNum, active);
+            } else {
+                equationSystem.notifyEquationChange(this, active ? EquationEventType.EQUATION_ACTIVATED : EquationEventType.EQUATION_DEACTIVATED);
+            }
         }
+    }
+
+    void setComplementaryArray(EquationArray<V, E> complementaryArray) {
+        this.complementaryArray = complementaryArray;
     }
 
     public Equation<V, E> addTerm(EquationTerm<V, E> term) {
