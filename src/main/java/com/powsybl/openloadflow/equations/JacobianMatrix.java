@@ -48,6 +48,14 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     private Status status = Status.STRUCTURE_INVALID;
 
+    /**
+     * When a complementary equation pair switches, the matrix keeps its structure but the values of a column change
+     * completely, so by default the LU decomposition is fully factorized again. Setting this to true only asks for an
+     * incremental update instead, which is checked by the reciprocal pivot growth test and falls back to a full
+     * factorization when it is not good enough.
+     */
+    private static final boolean PAIR_INCREMENTAL_LU = Boolean.getBoolean("olf.pairIncrementalLu");
+
     public JacobianMatrix(EquationSystem<V, E> equationSystem, MatrixFactory matrixFactory) {
         this.equationSystem = Objects.requireNonNull(equationSystem);
         this.matrixFactory = Objects.requireNonNull(matrixFactory);
@@ -92,7 +100,7 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     @Override
     public void onEquationArrayValuesChange(EquationArray<V, E> equationArray) {
-        updateStatus(Status.VALUES_AND_ZEROS_INVALID);
+        updateStatus(PAIR_INCREMENTAL_LU ? Status.VALUES_INVALID : Status.VALUES_AND_ZEROS_INVALID);
     }
 
     @Override
