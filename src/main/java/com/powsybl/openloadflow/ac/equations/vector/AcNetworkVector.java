@@ -90,11 +90,11 @@ public class AcNetworkVector extends AbstractLfNetworkListener
             int num = v.getElementNum();
             int row = v.getRow();
             switch (v.getType()) {
-                case BUS_V:
+                case BUS_V, BUS_E:
                     busVector.vRow[num] = row;
                     break;
 
-                case BUS_PHI:
+                case BUS_PHI, BUS_F:
                     busVector.phRow[num] = row;
                     break;
 
@@ -177,6 +177,10 @@ public class AcNetworkVector extends AbstractLfNetworkListener
                         : branchVector.a1[branchNum];
 
                 if (isBranchConnectedSide1(branchNum) && isBranchConnectedSide2(branchNum)) {
+                    if (branchVector.cartesian) {
+                        updateCartesianClosedBranch(branchNum, state, w);
+                        continue;
+                    }
                     double ph1 = state[branchVector.ph1Row[branchNum]];
                     double ph2 = state[branchVector.ph2Row[branchNum]];
                     double a1 = branchVector.a1State[branchNum];
@@ -220,6 +224,104 @@ public class AcNetworkVector extends AbstractLfNetworkListener
                 }
             }
         }
+    }
+
+    /**
+     * Update power flows and their derivatives of a closed branch, bus voltages being in cartesian coordinates.
+     * With V1' = r1.exp(j.a1).V1 = u1 + j.w1 the voltage after the ideal transformer and y12 = g12 + j.b12 the series
+     * admittance:
+     * I1' = (g1 + j.b1 + y12).V1' - y12.V2, S1 = V1'.conj(I1')
+     * I2 = (g2 + j.b2 + y12).V2 - y12.V1', S2 = V2.conj(I2)
+     */
+    private void updateCartesianClosedBranch(int branchNum, double[] state, DoubleWrapper w) {
+        double e1 = state[branchVector.v1Row[branchNum]];
+        double f1 = state[branchVector.ph1Row[branchNum]];
+        double e2 = state[branchVector.v2Row[branchNum]];
+        double f2 = state[branchVector.ph2Row[branchNum]];
+        double r1 = branchVector.r1State[branchNum];
+        double a1 = branchVector.a1State[branchNum];
+
+        double y = branchVector.y[branchNum];
+        double g12 = y * branchVector.sinKsi[branchNum];
+        double b12 = -y * branchVector.cosKsi[branchNum];
+
+        double cosA1;
+        double sinA1;
+        if (a1 == 0) {
+            cosA1 = 1;
+            sinA1 = 0;
+        } else {
+            sinA1 = FastMath.sinAndCos(a1, w);
+            cosA1 = w.value;
+        }
+
+        double u1o = cosA1 * e1 - sinA1 * f1;
+        double w1o = sinA1 * e1 + cosA1 * f1;
+        double u1 = r1 * u1o;
+        double w1 = r1 * w1o;
+
+        // side 1
+        double ga1 = branchVector.g1[branchNum] + g12;
+        double ba1 = branchVector.b1[branchNum] + b12;
+        double ir1 = ga1 * u1 - ba1 * w1 - g12 * e2 + b12 * f2;
+        double ii1 = ga1 * w1 + ba1 * u1 - g12 * f2 - b12 * e2;
+        double p1 = u1 * ir1 + w1 * ii1;
+        double q1 = w1 * ir1 - u1 * ii1;
+        double dp1du1 = ir1 + u1 * ga1 + w1 * ba1;
+        double dp1dw1 = ii1 - u1 * ba1 + w1 * ga1;
+        double dq1du1 = -ii1 + w1 * ga1 - u1 * ba1;
+        double dq1dw1 = ir1 - w1 * ba1 - u1 * ga1;
+
+        // side 2
+        double ga2 = branchVector.g2[branchNum] + g12;
+        double ba2 = branchVector.b2[branchNum] + b12;
+        double ir2 = ga2 * e2 - ba2 * f2 - g12 * u1 + b12 * w1;
+        double ii2 = ga2 * f2 + ba2 * e2 - g12 * w1 - b12 * u1;
+        double p2 = e2 * ir2 + f2 * ii2;
+        double q2 = f2 * ir2 - e2 * ii2;
+        double dp2du1 = -e2 * g12 - f2 * b12;
+        double dp2dw1 = e2 * b12 - f2 * g12;
+        double dq2du1 = -f2 * g12 + e2 * b12;
+        double dq2dw1 = f2 * b12 + e2 * g12;
+
+        branchVector.p1[branchNum] = p1;
+        branchVector.q1[branchNum] = q1;
+        branchVector.p2[branchNum] = p2;
+        branchVector.q2[branchNum] = q2;
+        branchVector.i1[branchNum] = FastMath.hypot(p1, q1) / FastMath.sqrt(e1 * e1 + f1 * f1);
+        branchVector.i2[branchNum] = FastMath.hypot(p2, q2) / FastMath.sqrt(e2 * e2 + f2 * f2);
+
+        // derivatives with respect to e1, f1, a1 and r1 through V1' (chain rule)
+        double rc = r1 * cosA1;
+        double rs = r1 * sinA1;
+
+        branchVector.dp1dv1[branchNum] = rc * dp1du1 + rs * dp1dw1;
+        branchVector.dp1dph1[branchNum] = -rs * dp1du1 + rc * dp1dw1;
+        branchVector.dp1dv2[branchNum] = -u1 * g12 - w1 * b12;
+        branchVector.dp1dph2[branchNum] = u1 * b12 - w1 * g12;
+        branchVector.dp1da1[branchNum] = -w1 * dp1du1 + u1 * dp1dw1;
+        branchVector.dp1dr1[branchNum] = u1o * dp1du1 + w1o * dp1dw1;
+
+        branchVector.dq1dv1[branchNum] = rc * dq1du1 + rs * dq1dw1;
+        branchVector.dq1dph1[branchNum] = -rs * dq1du1 + rc * dq1dw1;
+        branchVector.dq1dv2[branchNum] = -w1 * g12 + u1 * b12;
+        branchVector.dq1dph2[branchNum] = w1 * b12 + u1 * g12;
+        branchVector.dq1da1[branchNum] = -w1 * dq1du1 + u1 * dq1dw1;
+        branchVector.dq1dr1[branchNum] = u1o * dq1du1 + w1o * dq1dw1;
+
+        branchVector.dp2dv1[branchNum] = rc * dp2du1 + rs * dp2dw1;
+        branchVector.dp2dph1[branchNum] = -rs * dp2du1 + rc * dp2dw1;
+        branchVector.dp2dv2[branchNum] = ir2 + e2 * ga2 + f2 * ba2;
+        branchVector.dp2dph2[branchNum] = ii2 - e2 * ba2 + f2 * ga2;
+        branchVector.dp2da1[branchNum] = -w1 * dp2du1 + u1 * dp2dw1;
+        branchVector.dp2dr1[branchNum] = u1o * dp2du1 + w1o * dp2dw1;
+
+        branchVector.dq2dv1[branchNum] = rc * dq2du1 + rs * dq2dw1;
+        branchVector.dq2dph1[branchNum] = -rs * dq2du1 + rc * dq2dw1;
+        branchVector.dq2dv2[branchNum] = -ii2 + f2 * ga2 - e2 * ba2;
+        branchVector.dq2dph2[branchNum] = ir2 - f2 * ba2 - e2 * ga2;
+        branchVector.dq2da1[branchNum] = -w1 * dq2du1 + u1 * dq2dw1;
+        branchVector.dq2dr1[branchNum] = u1o * dq2du1 + w1o * dq2dw1;
     }
 
     public void updateNetworkState() {

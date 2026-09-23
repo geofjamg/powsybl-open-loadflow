@@ -40,6 +40,12 @@ public abstract class AbstractClosedBranchEquationTermArrayEvaluator extends Abs
         double da1 = a1Row != -1 ? dx.get(a1Row, column) : 0;
         int r1Row = branchVector.r1Row[branchNum];
         double dr1 = r1Row != -1 ? dx.get(r1Row, column) : 0;
+        if (branchVector.cartesian) {
+            // dv and dph are here real and imaginary part variations, derivatives are already up to date
+            double[][] der = evalDer();
+            return der[0][branchNum] * dv1 + der[1][branchNum] * dv2 + der[2][branchNum] * dph1 + der[3][branchNum] * dph2
+                    + der[4][branchNum] * da1 + der[5][branchNum] * dr1;
+        }
         return calculateSensi(branchNum, dph1, dph2, dv1, dv2, da1, dr1);
     }
 
@@ -51,11 +57,13 @@ public abstract class AbstractClosedBranchEquationTermArrayEvaluator extends Abs
         int bus2Num = branchVector.bus2Num[branchNum];
         boolean deriveA1 = branchVector.deriveA1[branchNum];
         boolean deriveR1 = branchVector.deriveR1[branchNum];
+        AcVariableType vType = branchVector.cartesian ? AcVariableType.BUS_E : AcVariableType.BUS_V;
+        AcVariableType phType = branchVector.cartesian ? AcVariableType.BUS_F : AcVariableType.BUS_PHI;
         List<Derivative<AcVariableType>> derivatives = new ArrayList<>(6);
-        derivatives.add(new Derivative<>(variableSet.getVariable(bus1Num, AcVariableType.BUS_V), 0));
-        derivatives.add(new Derivative<>(variableSet.getVariable(bus2Num, AcVariableType.BUS_V), 1));
-        derivatives.add(new Derivative<>(variableSet.getVariable(bus1Num, AcVariableType.BUS_PHI), 2));
-        derivatives.add(new Derivative<>(variableSet.getVariable(bus2Num, AcVariableType.BUS_PHI), 3));
+        derivatives.add(new Derivative<>(variableSet.getVariable(bus1Num, vType), 0));
+        derivatives.add(new Derivative<>(variableSet.getVariable(bus2Num, vType), 1));
+        derivatives.add(new Derivative<>(variableSet.getVariable(bus1Num, phType), 2));
+        derivatives.add(new Derivative<>(variableSet.getVariable(bus2Num, phType), 3));
         if (deriveA1) {
             derivatives.add(new Derivative<>(variableSet.getVariable(branchNum, AcVariableType.BRANCH_ALPHA1), 4));
         }

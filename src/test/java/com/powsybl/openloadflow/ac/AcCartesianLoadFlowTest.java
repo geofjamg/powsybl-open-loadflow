@@ -58,8 +58,21 @@ class AcCartesianLoadFlowTest {
     private void compare(Supplier<Network> networkSupplier, Consumer<LoadFlowParameters> parametersConfigurer) {
         Network polarNetwork = networkSupplier.get();
         LoadFlowResult polarResult = run(polarNetwork, AcVoltageRepresentation.POLAR, parametersConfigurer);
-        Network cartesianNetwork = networkSupplier.get();
-        LoadFlowResult cartesianResult = run(cartesianNetwork, AcVoltageRepresentation.CARTESIAN, parametersConfigurer);
+        // check both vectorized and non vectorized equation systems
+        boolean vectorizedDefaultValue = AcLoadFlowParameters.vectorizedDefaultValue;
+        try {
+            for (boolean vectorized : new boolean[] {true, false}) {
+                AcLoadFlowParameters.vectorizedDefaultValue = vectorized;
+                Network cartesianNetwork = networkSupplier.get();
+                LoadFlowResult cartesianResult = run(cartesianNetwork, AcVoltageRepresentation.CARTESIAN, parametersConfigurer);
+                compare(polarNetwork, polarResult, cartesianNetwork, cartesianResult);
+            }
+        } finally {
+            AcLoadFlowParameters.vectorizedDefaultValue = vectorizedDefaultValue;
+        }
+    }
+
+    private static void compare(Network polarNetwork, LoadFlowResult polarResult, Network cartesianNetwork, LoadFlowResult cartesianResult) {
 
         assertEquals(polarResult.getComponentResults().size(), cartesianResult.getComponentResults().size());
         for (int i = 0; i < polarResult.getComponentResults().size(); i++) {

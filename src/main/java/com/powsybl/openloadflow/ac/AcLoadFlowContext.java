@@ -10,7 +10,6 @@ package com.powsybl.openloadflow.ac;
 import com.powsybl.openloadflow.ac.equations.AcEquationSystemCreator;
 import com.powsybl.openloadflow.ac.equations.AcEquationType;
 import com.powsybl.openloadflow.ac.equations.AcVariableType;
-import com.powsybl.openloadflow.ac.equations.AcVoltageRepresentation;
 import com.powsybl.openloadflow.ac.equations.asym.AsymmetricalAcEquationSystemCreator;
 import com.powsybl.openloadflow.ac.equations.vector.AcVectorizedEquationSystemCreator;
 import com.powsybl.openloadflow.equations.EquationSystem;
@@ -54,10 +53,7 @@ public class AcLoadFlowContext extends AbstractLoadFlowContext<AcVariableType, A
     }
 
     private AcEquationSystemCreator createAcEquationSystemCreator() {
-        // vectorized equation system only supports polar voltage representation
-        boolean vectorized = parameters.isVectorized()
-                && parameters.getEquationSystemCreationParameters().getVoltageRepresentation() == AcVoltageRepresentation.POLAR;
-        return vectorized ? new AcVectorizedEquationSystemCreator(network, parameters.getEquationSystemCreationParameters())
+        return parameters.isVectorized() ? new AcVectorizedEquationSystemCreator(network, parameters.getEquationSystemCreationParameters())
                                          : new AcEquationSystemCreator(network, parameters.getEquationSystemCreationParameters());
     }
 

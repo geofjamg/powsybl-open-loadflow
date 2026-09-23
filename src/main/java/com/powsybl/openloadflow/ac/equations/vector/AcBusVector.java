@@ -18,6 +18,8 @@ import java.util.List;
  */
 public class AcBusVector {
 
+    // in cartesian voltage representation, vRow and v are related to the real part (e) and phRow and ph to the
+    // imaginary part (f) of the bus voltage
     public final int[] vRow;
     public final int[] phRow;
 

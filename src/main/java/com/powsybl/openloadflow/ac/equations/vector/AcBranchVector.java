@@ -9,6 +9,7 @@ package com.powsybl.openloadflow.ac.equations.vector;
 
 import com.powsybl.openloadflow.ac.equations.AcEquationSystemCreationParameters;
 import com.powsybl.openloadflow.ac.equations.AcEquationSystemCreator;
+import com.powsybl.openloadflow.ac.equations.AcVoltageRepresentation;
 import com.powsybl.openloadflow.network.LfBranch;
 import com.powsybl.openloadflow.network.LfBus;
 import com.powsybl.openloadflow.network.PiModel;
@@ -24,6 +25,13 @@ import java.util.List;
  * @author Geoffroy Jamgotchian <geoffroy.jamgotchian at rte-france.com>
  */
 public class AcBranchVector {
+
+    /**
+     * True if bus voltages are in cartesian coordinates (e, f). In that case, v1Row, v2Row, ph1Row and ph2Row are the
+     * rows of e1, e2, f1 and f2 variables, and derivatives arrays named dxdv1, dxdv2, dxdph1 and dxdph2 contain
+     * derivatives with respect to e1, e2, f1 and f2.
+     */
+    final boolean cartesian;
 
     final int[] bus1Num;
     final int[] bus2Num;
@@ -95,6 +103,7 @@ public class AcBranchVector {
 
     public AcBranchVector(List<LfBranch> branches, AcEquationSystemCreationParameters creationParameters) {
         int size = branches.size();
+        cartesian = creationParameters.getVoltageRepresentation() == AcVoltageRepresentation.CARTESIAN;
         bus1Num = new int[size];
         bus2Num = new int[size];
         connected1 = new boolean[size];
