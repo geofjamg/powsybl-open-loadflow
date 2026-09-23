@@ -302,6 +302,15 @@ AC load flow solver engine. Currently, it can be one of:
 
 The default value is `NEWTON_RAPHSON`.
 
+(param-lf-ac-voltage-representation)=
+### acVoltageRepresentation
+How bus voltages are represented in the variables of the AC equation system:
+- `POLAR`: voltage magnitude $v$ and angle $\phi$;
+- `CARTESIAN`: voltage real part $e$ and imaginary part $f$, with $v e^{j\phi} = e + jf$. See [`Cartesian voltage representation`](loadflow.md#cartesian-voltage-representation).
+  This mode is experimental, it is not compatible with the `FAST_DECOUPLED` AC solver and is not supported by sensitivity analysis.
+
+The default value is `POLAR`.
+
 (param-lf-max-outer-loop-iterations)=
 ### maxOuterLoopIterations
 Maximum number of iterations for the AC solver outer loop.<br>

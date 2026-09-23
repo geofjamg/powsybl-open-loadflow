@@ -12,9 +12,11 @@ import com.powsybl.openloadflow.ac.equations.AcVariableType;
 import com.powsybl.openloadflow.equations.EquationSystem;
 import com.powsybl.openloadflow.equations.StateVector;
 import com.powsybl.openloadflow.equations.Variable;
+import com.powsybl.openloadflow.network.LfBus;
 import com.powsybl.openloadflow.network.LfNetwork;
 import com.powsybl.openloadflow.network.util.PreviousValueVoltageInitializer;
 import com.powsybl.openloadflow.network.util.VoltageInitializer;
+import net.jafama.FastMath;
 
 /**
  * @author Geoffroy Jamgotchian {@literal <geoffroy.jamgotchian at rte-france.com>}
@@ -35,6 +37,18 @@ public final class AcSolverUtil {
                 case BUS_PHI:
                     x[v.getRow()] = initializer.getAngle(network.getBus(v.getElementNum()));
                     break;
+
+                case BUS_E: {
+                    LfBus bus = network.getBus(v.getElementNum());
+                    x[v.getRow()] = initializer.getMagnitude(bus) * FastMath.cos(initializer.getAngle(bus));
+                    break;
+                }
+
+                case BUS_F: {
+                    LfBus bus = network.getBus(v.getElementNum());
+                    x[v.getRow()] = initializer.getMagnitude(bus) * FastMath.sin(initializer.getAngle(bus));
+                    break;
+                }
 
                 case SHUNT_B:
                     x[v.getRow()] = network.getShunt(v.getElementNum()).getB();
@@ -86,6 +100,42 @@ public final class AcSolverUtil {
         equationSystem.getStateVector().set(x);
     }
 
+    /**
+     * Get bus voltage magnitude from the state vector, whatever the voltage representation.
+     */
+    public static double getBusV(EquationSystem<AcVariableType, AcEquationType> equationSystem, int busNum) {
+        StateVector stateVector = equationSystem.getStateVector();
+        int vRow = equationSystem.getVariable(busNum, AcVariableType.BUS_V).getRow();
+        if (vRow != -1) {
+            return stateVector.get(vRow);
+        }
+        int eRow = equationSystem.getVariable(busNum, AcVariableType.BUS_E).getRow();
+        int fRow = equationSystem.getVariable(busNum, AcVariableType.BUS_F).getRow();
+        if (eRow != -1 && fRow != -1) {
+            double e = stateVector.get(eRow);
+            double f = stateVector.get(fRow);
+            return FastMath.sqrt(e * e + f * f);
+        }
+        return Double.NaN;
+    }
+
+    /**
+     * Get bus voltage angle from the state vector, whatever the voltage representation.
+     */
+    public static double getBusAngle(EquationSystem<AcVariableType, AcEquationType> equationSystem, int busNum) {
+        StateVector stateVector = equationSystem.getStateVector();
+        int phiRow = equationSystem.getVariable(busNum, AcVariableType.BUS_PHI).getRow();
+        if (phiRow != -1) {
+            return stateVector.get(phiRow);
+        }
+        int eRow = equationSystem.getVariable(busNum, AcVariableType.BUS_E).getRow();
+        int fRow = equationSystem.getVariable(busNum, AcVariableType.BUS_F).getRow();
+        if (eRow != -1 && fRow != -1) {
+            return FastMath.atan2(stateVector.get(fRow), stateVector.get(eRow));
+        }
+        return Double.NaN;
+    }
+
     public static void updateNetwork(LfNetwork network, EquationSystem<AcVariableType, AcEquationType> equationSystem) {
         // update state variable
         StateVector stateVector = equationSystem.getStateVector();
@@ -97,6 +147,19 @@ public final class AcSolverUtil {
 
                 case BUS_PHI:
                     network.getBus(v.getElementNum()).setAngle(stateVector.get(v.getRow()));
+                    break;
+
+                case BUS_E: {
+                    LfBus bus = network.getBus(v.getElementNum());
+                    double e = stateVector.get(v.getRow());
+                    double f = stateVector.get(equationSystem.getVariable(v.getElementNum(), AcVariableType.BUS_F).getRow());
+                    bus.setV(FastMath.sqrt(e * e + f * f));
+                    bus.setAngle(FastMath.atan2(f, e));
+                    break;
+                }
+
+                case BUS_F:
+                    // already processed with real part
                     break;
 
                 case BUS_V_ZERO:

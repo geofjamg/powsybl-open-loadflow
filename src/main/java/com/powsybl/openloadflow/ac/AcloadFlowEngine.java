@@ -17,6 +17,7 @@ import com.powsybl.openloadflow.ac.solver.AcSolver;
 import com.powsybl.openloadflow.ac.solver.AcSolverFactory;
 import com.powsybl.openloadflow.ac.solver.AcSolverResult;
 import com.powsybl.openloadflow.ac.solver.AcSolverStatus;
+import com.powsybl.openloadflow.ac.solver.AcSolverUtil;
 import com.powsybl.openloadflow.equations.EquationSystem;
 import com.powsybl.openloadflow.equations.Variable;
 import com.powsybl.openloadflow.lf.LoadFlowEngine;
@@ -163,8 +164,8 @@ public class AcloadFlowEngine implements LoadFlowEngine<AcVariableType, AcEquati
         LfNetwork network = context.getNetwork();
         Map<String, Double> busesOutOfNormalVoltageRange = new LinkedHashMap<>();
         for (Variable<AcVariableType> v : equationSystem.getIndex().getSortedVariablesToFind()) {
-            if (v.getType() == AcVariableType.BUS_V && !network.getBus(v.getElementNum()).isFictitious()) {
-                double value = equationSystem.getStateVector().get(v.getRow());
+            if ((v.getType() == AcVariableType.BUS_V || v.getType() == AcVariableType.BUS_E) && !network.getBus(v.getElementNum()).isFictitious()) {
+                double value = AcSolverUtil.getBusV(equationSystem, v.getElementNum());
                 if (value < parameters.getMinRealisticVoltage() || value > parameters.getMaxRealisticVoltage()) {
                     // only consider unrealistic if nominal voltage high enough
                     if (network.getBus(v.getElementNum()).getNominalV() >= minNominalVoltageRealisticVoltageCheck) {

@@ -14,6 +14,7 @@ import com.powsybl.openloadflow.OpenLoadFlowParameters;
 import com.powsybl.openloadflow.ac.AcLoadFlowParameters;
 import com.powsybl.openloadflow.ac.equations.AcEquationType;
 import com.powsybl.openloadflow.ac.equations.AcVariableType;
+import com.powsybl.openloadflow.ac.equations.AcVoltageRepresentation;
 import com.powsybl.openloadflow.equations.EquationSystem;
 import com.powsybl.openloadflow.equations.EquationVector;
 import com.powsybl.openloadflow.equations.JacobianMatrix;
@@ -43,6 +44,9 @@ public class FastDecoupledFactory extends NewtonRaphsonFactory {
         }
         if (parametersExt.isAcDcNetwork()) {
             throw new PowsyblException("Fast-Decoupled solver is incompatible with AC-DC load flow: acDcNetwork OpenLoadFlowParameter should be switched to false");
+        }
+        if (parametersExt.getAcVoltageRepresentation() != AcVoltageRepresentation.POLAR) {
+            throw new PowsyblException("Fast-Decoupled solver is only compatible with polar voltage representation: acVoltageRepresentation OpenLoadFlowParameter should be switched to POLAR");
         }
     }
 

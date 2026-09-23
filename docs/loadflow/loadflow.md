@@ -63,6 +63,22 @@ The underlying principle of the algorithm is the following:
 
 See **acSolverType** below for more details.
 
+### Cartesian voltage representation
+
+By default, bus voltages are represented in polar coordinates $(v, \phi)$. Using the [`acVoltageRepresentation`](parameters.md#acvoltagerepresentation)
+parameter, bus voltages can instead be represented in cartesian coordinates $(e, f)$ with $V = e + jf$.
+In that case, branch power flows are quadratic functions of the state variables. For instance, for a branch with an ideal
+transformer at side 1 (ratio $\rho_1$, phase shift $\alpha_1$) and series admittance $y_{12}$:
+
+$$V'_1 = \rho_1 e^{j\alpha_1} (e_1 + j f_1)$$
+
+$$I'_1 = (g_1 + j b_1 + y_{12}) V'_1 - y_{12} V_2$$
+
+$$S_1 = V'_1 \overline{I'_1}$$
+
+Voltage magnitude and angle equations (voltage control, slack bus angle reference, non-impedant branches) are written
+with $v = \sqrt{e^2 + f^2}$ and $\phi = atan2(f, e)$, so that the targets and the stopping criteria are the same as for the polar representation.
+
 ### Other regulation modes
 
 PQ-bus and PV-bus are used to model local voltage magnitude or local reactive power controls. Other controls are supported in OpenLoadFLow:

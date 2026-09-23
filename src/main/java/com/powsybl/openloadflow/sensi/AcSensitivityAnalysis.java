@@ -314,6 +314,9 @@ public class AcSensitivityAnalysis extends AbstractSensitivityAnalysis<AcVariabl
 
         LoadFlowParameters lfParameters = parameters.getLoadFlowParameters();
         OpenLoadFlowParameters lfParametersExt = OpenLoadFlowParameters.get(lfParameters);
+        if (lfParametersExt.getAcVoltageRepresentation() != AcVoltageRepresentation.POLAR) {
+            throw new PowsyblException("AC sensitivity analysis only supports polar voltage representation");
+        }
         VariablesTargetVoltageInfo variablesTargetVoltageInfo = getVariableTargetVoltageInfo(factorReader, network);
 
         // create LF network (we only manage main connected component)

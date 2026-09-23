@@ -10,6 +10,7 @@ package com.powsybl.openloadflow.lf;
 import com.powsybl.commons.PowsyblException;
 import com.powsybl.openloadflow.equations.Equation;
 import com.powsybl.openloadflow.equations.EquationSystem;
+import com.powsybl.openloadflow.equations.EquationTerm;
 import com.powsybl.openloadflow.equations.Quantity;
 import com.powsybl.openloadflow.network.*;
 
@@ -77,6 +78,10 @@ public abstract class AbstractEquationSystemUpdater<V extends Enum<V> & Quantity
 
     protected abstract V getTypeBusPhi();
 
+    protected EquationTerm<V, E> createBusPhiTerm(LfBus bus) {
+        return equationSystem.getVariable(bus.getNum(), getTypeBusPhi()).createTerm();
+    }
+
     @Override
     public void onSlackBusChange(LfBus bus, boolean slack) {
         equationSystem.getEquation(bus.getNum(), getTypeBusTargetP())
@@ -90,8 +95,7 @@ public abstract class AbstractEquationSystemUpdater<V extends Enum<V> & Quantity
             Equation<V, E> phiEq = equationSystem.getEquation(bus.getNum(), getTypeBusTargetPhi()).orElse(null);
             if (phiEq == null) {
                 phiEq = equationSystem.createEquation(bus, getTypeBusTargetPhi())
-                        .addTerm(equationSystem.getVariable(bus.getNum(), getTypeBusPhi())
-                                .createTerm());
+                        .addTerm(createBusPhiTerm(bus));
             }
             phiEq.setActive(true);
         } else {

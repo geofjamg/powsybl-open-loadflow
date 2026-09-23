@@ -27,7 +27,9 @@ public enum AcVariableType implements Quantity {
     DUMMY_Q("dummy_q", ElementType.BRANCH), // dummy reactive power injection (zero impedance branch)
     DC_BUS_V("v_dc", ElementType.DC_BUS), // DC bus voltage
     CONV_P_AC("conv_p_ac", ElementType.CONVERTER), // converter active power load, at AC side
-    CONV_Q_AC("conv_q_ac", ElementType.CONVERTER); // converter reactive power load, at AC side
+    CONV_Q_AC("conv_q_ac", ElementType.CONVERTER), // converter reactive power load, at AC side
+    BUS_E("e", ElementType.BUS), // bus voltage real part (cartesian voltage representation)
+    BUS_F("f", ElementType.BUS); // bus voltage imaginary part (cartesian voltage representation)
 
     private final String symbol;
 

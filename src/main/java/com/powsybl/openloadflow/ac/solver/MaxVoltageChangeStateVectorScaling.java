@@ -54,7 +54,7 @@ public class MaxVoltageChangeStateVectorScaling implements StateVectorScaling {
             int row = variable.getRow();
             double absValueChange = Math.abs(dx[row]);
             switch (variable.getType()) {
-                case BUS_V:
+                case BUS_V, BUS_E, BUS_F:
                     if (absValueChange > maxDv) {
                         stepSize = Math.min(stepSize, maxDv / absValueChange);
                         vCutCount++;

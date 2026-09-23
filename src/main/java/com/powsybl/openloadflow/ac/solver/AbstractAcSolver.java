@@ -128,10 +128,8 @@ public abstract class AbstractAcSolver implements AcSolver {
         int elementNum = equation.getElementNum();
         // REPORTED_AC_EQUATION_TYPES only contain bus equations
         LfBus bus = network.getBus(elementNum);
-        int busVRow = equationSystem.getVariable(elementNum, AcVariableType.BUS_V).getRow();
-        int busPhiRow = equationSystem.getVariable(elementNum, AcVariableType.BUS_PHI).getRow();
-        double busV = equationSystem.getStateVector().get(busVRow);
-        double busPhi = equationSystem.getStateVector().get(busPhiRow);
+        double busV = AcSolverUtil.getBusV(equationSystem, elementNum);
+        double busPhi = AcSolverUtil.getBusAngle(equationSystem, elementNum);
         double busNominalV = bus.getNominalV();
         double busSumP = bus.getP().eval() * PerUnit.SB;
         double busSumQ = bus.getQ().eval() * PerUnit.SB;

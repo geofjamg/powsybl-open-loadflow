@@ -9,6 +9,7 @@ package com.powsybl.openloadflow.ac.equations;
 
 import com.powsybl.iidm.network.TwoSides;
 import com.powsybl.openloadflow.equations.EquationSystem;
+import com.powsybl.openloadflow.equations.EquationTerm;
 import com.powsybl.openloadflow.lf.AbstractEquationSystemUpdater;
 import com.powsybl.openloadflow.network.*;
 import com.powsybl.openloadflow.util.Evaluable;
@@ -248,5 +249,10 @@ public class AcEquationSystemUpdater extends AbstractEquationSystemUpdater<AcVar
     @Override
     protected AcVariableType getTypeBusPhi() {
         return AcVariableType.BUS_PHI;
+    }
+
+    @Override
+    protected EquationTerm<AcVariableType, AcEquationType> createBusPhiTerm(LfBus bus) {
+        return parameters.getTermFactory().createBusVoltageAngleTerm(bus, equationSystem.getVariableSet());
     }
 }
