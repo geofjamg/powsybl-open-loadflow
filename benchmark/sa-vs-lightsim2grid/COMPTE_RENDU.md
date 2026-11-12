@@ -283,3 +283,4 @@ Configurations :
 | `e9d03e8` | Mise à jour partielle du vecteur des cibles |
 | `c14ffe2` | `isNeeded` et contrôle d'état réaliste moins chers |
 | `839ae4a` | Restauration moins chère (bus slack exclus, boucle unique sur les générateurs) |
+| `839ae9b` | Sauvegarde/restauration d'état vectorisée (tableaux plats) |
