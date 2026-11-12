@@ -177,6 +177,24 @@ public class AcTargetVector extends TargetVector<AcVariableType, AcEquationType>
             public void initialize(EquationArray<AcVariableType, AcEquationType> equationArray, LfNetwork network, double[] targets) {
                 AcTargetVector.init(equationArray, network, targets);
             }
+
+            @Override
+            public boolean initialize(EquationArray<AcVariableType, AcEquationType> equationArray, int elementNum, LfNetwork network, double[] targets) {
+                if (equationArray.getType() == AcEquationType.BUS_DISTR_SLACK_P) {
+                    return false; // depends on slack bus target
+                }
+                init(equationArray.getType(), equationArray.getElementNumToColumn(elementNum), elementNum, network, targets);
+                return true;
+            }
+
+            @Override
+            public boolean isBusLocal(LfBus bus) {
+                // slack bus target is used by distributed slack equations of other buses, and remote reactive power
+                // distribution equations depend on other controller buses targets
+                return !bus.isSlack()
+                        && !bus.hasGeneratorReactivePowerControl()
+                        && bus.getGeneratorVoltageControl().map(vc -> vc.getMergedControllerElements().size() <= 1).orElse(true);
+            }
         });
     }
 }

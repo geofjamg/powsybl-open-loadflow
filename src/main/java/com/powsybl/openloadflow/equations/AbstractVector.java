@@ -60,9 +60,20 @@ public abstract class AbstractVector<V extends Enum<V> & Quantity, E extends Enu
 
         @Override
         public void onGhostChange() {
-            invalidateValues();
+            onGhostColumnsChange();
         }
     };
+
+    /**
+     * Called when ghost columns have changed (see equation system index ghost mode).
+     */
+    protected void onGhostColumnsChange() {
+        invalidateValues();
+    }
+
+    protected boolean isValid() {
+        return status == Status.VALID;
+    }
 
     protected AbstractVector(EquationSystem<V, E> equationSystem) {
         this.equationSystem = Objects.requireNonNull(equationSystem);
