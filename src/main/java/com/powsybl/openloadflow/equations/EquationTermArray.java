@@ -157,6 +157,9 @@ public class EquationTermArray<V extends Enum<V> & Quantity, E extends Enum<E> &
         termNumsConcatenatedStartIndices[termNumsByEquationElementNum.length] = termNumsConcatenated.size();
 
         this.termNumByTermElementNum = new TIntIntHashMap(this.termNumByTermElementNum);
+
+        // term nums layout has changed
+        equationArray.invalidateEquationDerivativeVectors();
     }
 
     public double[] eval() {

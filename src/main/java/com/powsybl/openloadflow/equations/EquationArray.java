@@ -56,6 +56,39 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     private final Map<Integer, int[]> additionalMatrixIndexByElementNum = new HashMap<>();
     private boolean fastDerReady = false;
 
+    // for fast evaluation: for each term array, terms of active elements as flat (term num, term element num, column)
+    private record FlatEvalTable(int[] termNums, int[] termElementNums, int[] columns) {
+    }
+
+    private List<FlatEvalTable> flatEvalTables;
+
+    private List<FlatEvalTable> getFlatEvalTables() {
+        if (flatEvalTables == null) {
+            int[] columns = getElementNumToColumn();
+            List<FlatEvalTable> tables = new ArrayList<>(termArrays.size());
+            for (EquationTermArray<V, E> termArray : termArrays) {
+                int[] startIndices = termArray.getTermNumsConcatenatedStartIndices();
+                var concatenatedTermNums = termArray.getTermNumsConcatenated();
+                TIntArrayList termNums = new TIntArrayList();
+                TIntArrayList termElementNums = new TIntArrayList();
+                TIntArrayList termColumns = new TIntArrayList();
+                for (int elementNum = 0; elementNum < elementCount; elementNum++) {
+                    if (elementActive[elementNum]) {
+                        for (int i = startIndices[elementNum]; i < startIndices[elementNum + 1]; i++) {
+                            int termNum = concatenatedTermNums.getQuick(i);
+                            termNums.add(termNum);
+                            termElementNums.add(termArray.getTermElementNum(termNum));
+                            termColumns.add(columns[elementNum]);
+                        }
+                    }
+                }
+                tables.add(new FlatEvalTable(termNums.toArray(), termElementNums.toArray(), termColumns.toArray()));
+            }
+            flatEvalTables = tables;
+        }
+        return flatEvalTables;
+    }
+
     private final class AdditionalSingleTermsByEquation {
         private final List<SingleEquationTerm<V, E>> terms = new ArrayList<>();
         private final TreeMap<Variable<V>, List<SingleEquationTerm<V, E>>> termsByVariable = new TreeMap<>();
@@ -160,6 +193,7 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
 
     private void invalidateElementNumToColumn() {
         elementNumToColumn = null;
+        flatEvalTables = null;
         columnToElementNum = null;
         matrixElementIndexes.reset();
     }
@@ -225,6 +259,7 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         Objects.requireNonNull(termArray);
         termArray.setEquationArray(this);
         termArrays.add(termArray);
+        flatEvalTables = null;
         invalidateEquationDerivativeVectors();
     }
 
@@ -362,25 +397,18 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     }
 
     public void eval(double[] values) {
-        for (EquationTermArray<V, E> termArray : termArrays) {
+        List<FlatEvalTable> tables = getFlatEvalTables();
+        for (int t = 0; t < termArrays.size(); t++) {
+            EquationTermArray<V, E> termArray = termArrays.get(t);
             double[] termValues = termArray.eval();
-            int[] termNumsConcatenatedStartIndices = termArray.getTermNumsConcatenatedStartIndices();
-            for (int elementNum = 0; elementNum < elementCount; elementNum++) {
-                // skip inactive equations
-                if (!elementActive[elementNum]) {
-                    continue;
-                }
-                int column = getElementNumToColumn(elementNum);
-                var termNums = termArray.getTermNumsConcatenated();
-                int iStart = termNumsConcatenatedStartIndices[elementNum];
-                int iEnd = termNumsConcatenatedStartIndices[elementNum + 1];
-                for (int i = iStart; i < iEnd; i++) {
-                    int termNum = termNums.getQuick(i);
-                    // skip inactive terms
-                    if (termArray.isTermActive(termNum)) {
-                        int termElementNum = termArray.getTermElementNum(termNum);
-                        values[column] += termValues[termElementNum];
-                    }
+            FlatEvalTable table = tables.get(t);
+            int[] termNums = table.termNums();
+            int[] termElementNums = table.termElementNums();
+            int[] columns = table.columns();
+            for (int k = 0; k < termNums.length; k++) {
+                // skip inactive terms
+                if (termArray.isTermActive(termNums[k])) {
+                    values[columns[k]] += termValues[termElementNums[k]];
                 }
             }
         }
@@ -441,6 +469,7 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         equationDerivativeVector = null;
         matrixElementIndexes.reset();
         fastDerReady = false;
+        flatEvalTables = null;
     }
 
     public void der(DerHandler handler) {

@@ -7,7 +7,6 @@
  */
 package com.powsybl.openloadflow.network;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,19 +26,36 @@ public class BusDcState extends ElementState<LfBus> {
 
         private double loadTargetP;
         private double absVariableLoadTargetP;
-        private Map<String, Boolean> loadsDisablingStatus;
+        private String[] originalLoadIds;
+        private boolean[] originalLoadsDisabled;
 
         protected LoadDcState save(LfLoad load) {
             loadTargetP = load.getTargetP();
             absVariableLoadTargetP = load.getAbsVariableTargetP();
-            loadsDisablingStatus = new HashMap<>(load.getOriginalLoadsDisablingStatus());
+            Map<String, Boolean> loadsDisablingStatus = load.getOriginalLoadsDisablingStatus();
+            originalLoadIds = new String[loadsDisablingStatus.size()];
+            originalLoadsDisabled = new boolean[loadsDisablingStatus.size()];
+            int i = 0;
+            for (Map.Entry<String, Boolean> e : loadsDisablingStatus.entrySet()) {
+                originalLoadIds[i] = e.getKey();
+                originalLoadsDisabled[i] = e.getValue();
+                i++;
+            }
             return this;
         }
 
         protected void restore(LfLoad load) {
             load.setTargetP(loadTargetP);
             load.setAbsVariableTargetP(absVariableLoadTargetP);
-            load.setOriginalLoadsDisablingStatus(loadsDisablingStatus);
+            // restore values in the load own map: the saved state must not be shared with the load, otherwise it
+            // would be modified by next contingencies disabling original loads
+            Map<String, Boolean> loadsDisablingStatus = load.getOriginalLoadsDisablingStatus();
+            if (loadsDisablingStatus.size() != originalLoadIds.length) {
+                loadsDisablingStatus.clear();
+            }
+            for (int i = 0; i < originalLoadIds.length; i++) {
+                loadsDisablingStatus.put(originalLoadIds[i], originalLoadsDisabled[i]);
+            }
         }
     }
 
