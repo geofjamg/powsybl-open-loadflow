@@ -60,6 +60,13 @@ public interface LfLoad extends PropertyBag {
 
     void setOriginalLoadsDisablingStatus(Map<String, Boolean> originalLoadsDisablingStatus);
 
+    /**
+     * Version of the original loads disabling status, incremented each time it is modified.
+     */
+    default int getOriginalLoadsDisablingStatusVersion() {
+        return -1; // unknown: always considered as modified
+    }
+
     void updateState(boolean loadPowerFactorConstant, boolean breakers);
 
     Evaluable getP();

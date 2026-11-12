@@ -28,6 +28,7 @@ public class BusDcState extends ElementState<LfBus> {
         private double absVariableLoadTargetP;
         private String[] originalLoadIds;
         private boolean[] originalLoadsDisabled;
+        private int originalLoadsDisablingStatusVersion;
 
         protected LoadDcState save(LfLoad load) {
             loadTargetP = load.getTargetP();
@@ -41,6 +42,7 @@ public class BusDcState extends ElementState<LfBus> {
                 originalLoadsDisabled[i] = e.getValue();
                 i++;
             }
+            originalLoadsDisablingStatusVersion = load.getOriginalLoadsDisablingStatusVersion();
             return this;
         }
 
@@ -49,12 +51,17 @@ public class BusDcState extends ElementState<LfBus> {
             load.setAbsVariableTargetP(absVariableLoadTargetP);
             // restore values in the load own map: the saved state must not be shared with the load, otherwise it
             // would be modified by next contingencies disabling original loads
-            Map<String, Boolean> loadsDisablingStatus = load.getOriginalLoadsDisablingStatus();
-            if (loadsDisablingStatus.size() != originalLoadIds.length) {
-                loadsDisablingStatus.clear();
-            }
-            for (int i = 0; i < originalLoadIds.length; i++) {
-                loadsDisablingStatus.put(originalLoadIds[i], originalLoadsDisabled[i]);
+            int version = load.getOriginalLoadsDisablingStatusVersion();
+            if (version == -1 || version != originalLoadsDisablingStatusVersion) {
+                Map<String, Boolean> loadsDisablingStatus = load.getOriginalLoadsDisablingStatus();
+                if (loadsDisablingStatus.size() != originalLoadIds.length) {
+                    loadsDisablingStatus.clear();
+                }
+                for (int i = 0; i < originalLoadIds.length; i++) {
+                    loadsDisablingStatus.put(originalLoadIds[i], originalLoadsDisabled[i]);
+                }
+                // status now equal to the saved one
+                originalLoadsDisablingStatusVersion = load.getOriginalLoadsDisablingStatusVersion();
             }
         }
     }

@@ -40,6 +40,10 @@ public class SingleEquation<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     private final Map<Variable<V>, List<EquationTerm<V, E>>> termsByVariable = new TreeMap<>();
 
+    // array view of termsByVariable (same order), for fast derivative computation
+    private Variable<V>[] derVariables;
+    private EquationTerm<V, E>[][] derTerms;
+
     /**
      * Element index of a two dimensions matrix (equations * variables) indexed by variable index (order of the variable
      * in {@link #termsByVariable}.
@@ -115,6 +119,8 @@ public class SingleEquation<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
                     .add(termImpl);
         }
         matrixElementIndexes = null;
+        derVariables = null;
+        derTerms = null;
         termImpl.setEquation(this);
         equationSystem.addEquationTerm(termImpl);
         equationSystem.notifyEquationTermChange(termImpl, EquationTermEventType.EQUATION_TERM_ADDED);
@@ -191,8 +197,9 @@ public class SingleEquation<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         if (matrixElementIndexes == null) {
             return -1;
         }
+        updateDerArrays();
         int variableIndex = 0;
-        for (Variable<V> variable : termsByVariable.keySet()) {
+        for (Variable<V> variable : derVariables) {
             int variableRow = variable.getRow();
             if (variableRow != -1) {
                 if (variableRow == row) {
@@ -202,32 +209,6 @@ public class SingleEquation<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
             }
         }
         return -1;
-    }
-
-    public void der(DerHandler<V> handler) {
-        Objects.requireNonNull(handler);
-        int variableIndex = 0;
-        for (Map.Entry<Variable<V>, List<EquationTerm<V, E>>> e : termsByVariable.entrySet()) {
-            Variable<V> variable = e.getKey();
-            int row = variable.getRow();
-            if (row != -1) {
-                double value = 0;
-                // create a derivative even if all terms are not active, to allow later reactivation of terms
-                // that won't create a new matrix element and a simple update of the matrix
-                for (EquationTerm<V, E> term : e.getValue()) {
-                    if (term.isActive()) {
-                        value += term.der(variable);
-                    }
-                }
-                int oldMatrixElementIndex = matrixElementIndexes == null ? -1 : matrixElementIndexes[variableIndex];
-                int matrixElementIndex = handler.onDer(variable, value, oldMatrixElementIndex);
-                if (matrixElementIndexes == null) {
-                    matrixElementIndexes = new int[termsByVariable.size()];
-                }
-                matrixElementIndexes[variableIndex] = matrixElementIndex;
-                variableIndex++;
-            }
-        }
     }
 
     public double rhs() {
@@ -241,6 +222,48 @@ public class SingleEquation<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
             }
         }
         return rhs;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void updateDerArrays() {
+        if (derVariables == null) {
+            int size = termsByVariable.size();
+            derVariables = new Variable[size];
+            derTerms = new EquationTerm[size][];
+            int i = 0;
+            for (Map.Entry<Variable<V>, List<EquationTerm<V, E>>> e : termsByVariable.entrySet()) {
+                derVariables[i] = e.getKey();
+                derTerms[i] = e.getValue().toArray(new EquationTerm[0]);
+                i++;
+            }
+        }
+    }
+
+    public void der(DerHandler<V> handler) {
+        Objects.requireNonNull(handler);
+        updateDerArrays();
+        int variableIndex = 0;
+        for (int i = 0; i < derVariables.length; i++) {
+            Variable<V> variable = derVariables[i];
+            int row = variable.getRow();
+            if (row != -1) {
+                double value = 0;
+                // create a derivative even if all terms are not active, to allow later reactivation of terms
+                // that won't create a new matrix element and a simple update of the matrix
+                for (EquationTerm<V, E> term : derTerms[i]) {
+                    if (term.isActive()) {
+                        value += term.der(variable);
+                    }
+                }
+                int oldMatrixElementIndex = matrixElementIndexes == null ? -1 : matrixElementIndexes[variableIndex];
+                int matrixElementIndex = handler.onDer(variable, value, oldMatrixElementIndex);
+                if (matrixElementIndexes == null) {
+                    matrixElementIndexes = new int[derVariables.length];
+                }
+                matrixElementIndexes[variableIndex] = matrixElementIndex;
+                variableIndex++;
+            }
+        }
     }
 
     @Override

@@ -53,7 +53,11 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     // for fast derivative values update (same matrix structure): matrix value index of each derivative vector entry
     // and of each additional single term variable, recorded during last full derivative computation
     private int[] entryMatrixIndex;
-    private final Map<Integer, int[]> additionalMatrixIndexByElementNum = new HashMap<>();
+    // additional single terms derivatives, flat: element num, variable, terms and matrix value index
+    private final TIntArrayList additionalDerElementNums = new TIntArrayList();
+    private final List<Variable<V>> additionalDerVariables = new ArrayList<>();
+    private final List<SingleEquationTerm<V, E>[]> additionalDerTerms = new ArrayList<>();
+    private final TIntArrayList additionalDerMatrixIndexes = new TIntArrayList();
     private boolean fastDerReady = false;
 
     // ghost mode: a deactivated element keeps its column (see EquationSystemIndex ghost mode)
@@ -68,6 +72,10 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     }
 
     private List<FlatEvalTable> flatEvalTables;
+
+    // additional single terms, flat (element num, term), for fast evaluation
+    private TIntArrayList additionalEvalElementNums;
+    private List<SingleEquationTerm<V, E>> additionalEvalTerms;
 
     private List<FlatEvalTable> getFlatEvalTables() {
         if (flatEvalTables == null) {
@@ -113,6 +121,8 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             termImpl.setEquation(equation);
             equationSystem.addEquationTerm(termImpl);
             matrixElementIndexes.reset();
+            additionalEvalTerms = null;
+            fastDerReady = false;
             equationSystem.notifyEquationTermChange(termImpl, EquationTermEventType.EQUATION_TERM_ADDED);
             if (termImpl.hasRhs()) {
                 throw new UnsupportedOperationException("Rhs not supported yet");
@@ -516,13 +526,24 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
                 }
             }
         }
-        for (Map.Entry<Integer, AdditionalSingleTermsByEquation> singleTermsEntry : singleTermsByEquationElementNum.entrySet()) {
-            if (!elementActive[singleTermsEntry.getKey()]) {
-                continue;
+        if (additionalEvalTerms == null) {
+            additionalEvalElementNums = new TIntArrayList();
+            List<SingleEquationTerm<V, E>> evalTerms = new ArrayList<>();
+            for (Map.Entry<Integer, AdditionalSingleTermsByEquation> singleTermsEntry : singleTermsByEquationElementNum.entrySet()) {
+                for (SingleEquationTerm<V, E> singleTerm : singleTermsEntry.getValue().terms) {
+                    additionalEvalElementNums.add(singleTermsEntry.getKey());
+                    evalTerms.add(singleTerm);
+                }
             }
-            for (SingleEquationTerm<V, E> singleTerm : singleTermsEntry.getValue().terms) {
+            additionalEvalTerms = evalTerms;
+        }
+        int[] elementNumToColumn = getElementNumToColumn();
+        for (int k = 0; k < additionalEvalTerms.size(); k++) {
+            int elementNum = additionalEvalElementNums.getQuick(k);
+            if (elementActive[elementNum]) {
+                SingleEquationTerm<V, E> singleTerm = additionalEvalTerms.get(k);
                 if (singleTerm.isActive()) {
-                    values[getElementNumToColumn(singleTermsEntry.getKey())] += singleTerm.eval();
+                    values[elementNumToColumn[elementNum]] += singleTerm.eval();
                 }
             }
         }
@@ -587,7 +608,10 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             entryMatrixIndex = new int[entryCount];
         }
         Arrays.fill(entryMatrixIndex, -1);
-        additionalMatrixIndexByElementNum.clear();
+        additionalDerElementNums.clear();
+        additionalDerVariables.clear();
+        additionalDerTerms.clear();
+        additionalDerMatrixIndexes.clear();
 
         // calculate all derivative values
         // process column by column so equation by equation of the array
@@ -595,6 +619,8 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         // derivatives of additional single terms of current element, by variable row
         int[] additionalRows = new int[4];
         double[] additionalValues = new double[4];
+        List<Variable<V>> additionalVariables = new ArrayList<>();
+        List<SingleEquationTerm<V, E>[]> additionalTermArrays = new ArrayList<>();
         boolean[] additionalDone = new boolean[4];
         for (int elementNum = 0; elementNum < elementCount; elementNum++) {
             // skip elements without column (ghost elements keep their structure, with inactive terms)
@@ -606,6 +632,8 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
 
             // pre-compute derivatives of additional single terms (not vectorized) of this element
             int additionalCount = 0;
+            additionalVariables.clear();
+            additionalTermArrays.clear();
             if (hasSingleEquationTerms[elementNum]) {
                 AdditionalSingleTermsByEquation additionalTerms = singleTermsByEquationElementNum.get(elementNum);
                 for (var e : additionalTerms.termsByVariable.entrySet()) {
@@ -626,6 +654,8 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
                         additionalDone = Arrays.copyOf(additionalDone, additionalCount * 2);
                     }
                     additionalRows[additionalCount] = vRow;
+                    additionalVariables.add(v);
+                    additionalTermArrays.add(e.getValue().toArray(new SingleEquationTerm[0]));
                     additionalValues[additionalCount] = d;
                     additionalDone[additionalCount] = false;
                     additionalCount++;
@@ -676,7 +706,12 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
                 }
             }
             if (additionalMatrixIndex != null) {
-                additionalMatrixIndexByElementNum.put(elementNum, additionalMatrixIndex);
+                for (int k = 0; k < additionalCount; k++) {
+                    additionalDerElementNums.add(elementNum);
+                    additionalDerVariables.add(additionalVariables.get(k));
+                    additionalDerTerms.add(additionalTermArrays.get(k));
+                    additionalDerMatrixIndexes.add(additionalMatrixIndex[k]);
+                }
             }
         }
         fastDerReady = true;
@@ -708,25 +743,16 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
      */
     void derValues(double[] matrixValues) {
         equationDerivativeVector.addValues(this, entryMatrixIndex, matrixValues);
-        for (var e : additionalMatrixIndexByElementNum.entrySet()) {
-            int elementNum = e.getKey();
-            if (!elementActive[elementNum]) {
-                continue;
-            }
-            int[] additionalMatrixIndex = e.getValue();
-            int k = 0;
-            for (var e2 : singleTermsByEquationElementNum.get(elementNum).termsByVariable.entrySet()) {
-                Variable<V> v = e2.getKey();
-                if (v.getRow() == -1) {
-                    continue;
-                }
+        for (int k = 0; k < additionalDerElementNums.size(); k++) {
+            if (elementActive[additionalDerElementNums.getQuick(k)]) {
+                Variable<V> v = additionalDerVariables.get(k);
                 double d = 0;
-                for (var term : e2.getValue()) {
+                for (var term : additionalDerTerms.get(k)) {
                     if (term.isActive()) {
                         d += term.der(v);
                     }
                 }
-                matrixValues[additionalMatrixIndex[k++]] += d;
+                matrixValues[additionalDerMatrixIndexes.getQuick(k)] += d;
             }
         }
     }

@@ -46,6 +46,8 @@ public class LfLoadImpl extends AbstractLfInjection implements LfLoad {
 
     private Map<String, Boolean> loadsDisablingStatus = new LinkedHashMap<>();
 
+    private int loadsDisablingStatusVersion = 0;
+
     private Evaluable p = EvaluableConstants.NAN;
 
     private Evaluable q = EvaluableConstants.NAN;
@@ -253,6 +255,7 @@ public class LfLoadImpl extends AbstractLfInjection implements LfLoad {
     @Override
     public void setOriginalLoadDisabled(String originalId, boolean disabled) {
         loadsDisablingStatus.put(originalId, disabled);
+        loadsDisablingStatusVersion++;
     }
 
     @Override
@@ -263,6 +266,12 @@ public class LfLoadImpl extends AbstractLfInjection implements LfLoad {
     @Override
     public void setOriginalLoadsDisablingStatus(Map<String, Boolean> originalLoadsDisablingStatus) {
         this.loadsDisablingStatus = Objects.requireNonNull(originalLoadsDisablingStatus);
+        loadsDisablingStatusVersion++;
+    }
+
+    @Override
+    public int getOriginalLoadsDisablingStatusVersion() {
+        return loadsDisablingStatusVersion;
     }
 
     private static double getPowerFactor(Load load) {
