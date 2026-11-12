@@ -8,6 +8,7 @@
 package com.powsybl.openloadflow.equations;
 
 import com.powsybl.commons.PowsyblException;
+import gnu.trove.map.hash.TLongObjectHashMap;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,7 +32,7 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
     private final Set<SingleEquation<V, E>> sortedSetEquationsToSolve = new TreeSet<>();
 
     // variable reference counting in equation terms
-    private final TreeMap<Variable<V>, MutableInt> sortedMapVariablesToFindRefCount = new TreeMap<>();
+    private final Map<Variable<V>, MutableInt> sortedMapVariablesToFindRefCount = new TreeMap<>();
 
     private List<SingleEquation<V, E>> sortedSingleEquationsToSolve = Collections.emptyList();
 
@@ -147,17 +148,21 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
         variablesIndexValid = false;
     }
 
+    private static long variableKey(Enum<?> type, int elementNum) {
+        return ((long) type.ordinal() << 32) | (elementNum & 0xFFFFFFFFL);
+    }
+
     /**
      * Find the variable to find that is naturally paired with the equation (same element, type given by the
      * equation system diagonal variable type provider), or null if there is not.
      */
-    private Variable<V> getDiagonalVariable(Function<E, V> diagonalVariableTypeProvider, int elementNum, E equationType) {
+    private Variable<V> getDiagonalVariable(Function<E, V> diagonalVariableTypeProvider, TLongObjectHashMap<Variable<V>> variablesByKey,
+                                            int elementNum, E equationType) {
         V variableType = diagonalVariableTypeProvider.apply(equationType);
         if (variableType == null) {
             return null;
         }
-        Variable<V> key = sortedMapVariablesToFindRefCount.ceilingKey(new Variable<>(elementNum, variableType));
-        return key != null && key.getElementNum() == elementNum && key.getType() == variableType ? key : null;
+        return variablesByKey.get(variableKey(variableType, elementNum));
     }
 
     /**
@@ -179,13 +184,15 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
         List<Variable<V>> rowToVariable = new ArrayList<>(Collections.nCopies(variableCount, (Variable<V>) null));
         // remember previous rows, to keep the state vector consistent with the new numbering
         int[] previousRows = new int[variableCount];
+        TLongObjectHashMap<Variable<V>> variablesByKey = new TLongObjectHashMap<>(variableCount * 2);
         int k = 0;
         for (Variable<V> variable : sortedMapVariablesToFindRefCount.keySet()) {
             previousRows[k++] = variable.getRow();
             variable.setRow(-1);
+            variablesByKey.put(variableKey(variable.getType(), variable.getElementNum()), variable);
         }
         for (SingleEquation<V, E> equation : sortedSingleEquationsToSolve) {
-            Variable<V> variable = getDiagonalVariable(diagonalVariableTypeProvider, equation.getElementNum(), equation.getType());
+            Variable<V> variable = getDiagonalVariable(diagonalVariableTypeProvider, variablesByKey, equation.getElementNum(), equation.getType());
             if (variable != null && variable.getRow() == -1) {
                 variable.setRow(equation.getColumn());
                 rowToVariable.set(equation.getColumn(), variable);
@@ -196,7 +203,7 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
             for (int elementNum = 0; elementNum < equationArray.getElementCount(); elementNum++) {
                 if (equationArray.isElementActive(elementNum)) {
                     int column = elementNumToColumn[elementNum];
-                    Variable<V> variable = getDiagonalVariable(diagonalVariableTypeProvider, elementNum, equationArray.getType());
+                    Variable<V> variable = getDiagonalVariable(diagonalVariableTypeProvider, variablesByKey, elementNum, equationArray.getType());
                     if (variable != null && variable.getRow() == -1) {
                         variable.setRow(column);
                         rowToVariable.set(column, variable);

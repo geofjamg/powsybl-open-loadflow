@@ -123,6 +123,10 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         }
 
         int estimatedNonZeroValueCount = rowCount * 3;
+        if (matrix instanceof SparseMatrix previousMatrix) {
+            // structure changes are usually small, previous matrix size is a much better estimation
+            estimatedNonZeroValueCount = Math.max(estimatedNonZeroValueCount, previousMatrix.getValueCount() + rowCount);
+        }
         matrix = matrixFactory.create(rowCount, columnCount, estimatedNonZeroValueCount);
 
         // When initializing the matrix, it must be filled in the column order (in case of SparseMatrix)
