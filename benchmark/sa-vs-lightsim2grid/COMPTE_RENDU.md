@@ -18,14 +18,15 @@ est de ±15 % d'un créneau à l'autre ; le tableau donne le meilleur des deux t
 |---|---|---|---|
 | OLF d'origine (`16838da`) + powsybl-math-native 1.5.0 officiel | 317,3 s (318,1) | 42,8 ms | référence |
 | OLF branche + powsybl-math-native 1.5.0 officiel | 78,4 s (91,4) | 10,6 ms | identiques ¹ |
-| **OLF branche + powsybl-math-native amélioré** (`-Drgrowth=-1e-12`) | **67,8 s** (78,5) | **9,1 ms** | identiques ¹ |
+| OLF branche + powsybl-math-native amélioré (`-Drgrowth=-1e-12`) | 67,8 s (78,5) | 9,1 ms | identiques ¹ |
+| **idem + restauration d'état incrémentale** (`42d48c3`), voir plus bas | **64,5 s** | **8,7 ms** | identiques ¹ |
 | lightsim2grid 1.3.0, sans violations | 43,4 s (48,7) | 5,8 ms | |
 | lightsim2grid 1.3.0, avec violations (2,8 M, non filtrées) | 46,6 s (47,3) | 6,3 ms | |
 
 ¹ Mêmes statuts (7420 convergées, 2 en limite d'itérations) et mêmes 1 021 140 violations.
 
 - Le gain total est **×4,7** par rapport à l'origine.
-- **L'écart avec lightsim2grid passe de ×6,8 à ×1,45** à travail comparable (violations comprises).
+- **L'écart avec lightsim2grid passe de ×6,8 à ×1,4** à travail comparable (violations comprises).
 - **La parité n'est pas atteinte** : l'écart restant est entièrement côté Java (voir plus bas).
 
 ### Bibliothèque native améliorée (powsybl-math-native)
@@ -241,6 +242,51 @@ une seule notification groupée vers le système d'équations), ou une restaurat
 seuls éléments touchés par la contingence. Les deux demandent de revoir le modèle `LfNetwork` et
 ses listeners.
 
+## Restauration d'état incrémentale (setters qui marquent les éléments modifiés)
+
+Le profil JFR de la restauration vectorisée montrait que les **notifications ne coûtent presque
+rien** (≈ 3 % de la restauration) : les setters ne notifient déjà que si la valeur change. Des
+setters « silencieux » avec notification groupée n'auraient donc rien apporté. Le coût réel est le
+**parcours de tous les objets** (bus, générateurs, charges, shunts, branches, modèles en pi) : des
+défauts de cache, pour restaurer des éléments qui, pour la plupart, n'ont pas changé.
+
+L'idée a donc été retournée : chaque setter d'un attribut sauvegardé **marque l'élément modifié**
+dans un `StateChangeTracker` du `LfNetwork` (un booléen et une liste d'indices, coût négligeable).
+La restauration ne visite que les éléments marqués :
+
+- bus marqués : restauration complète (générateurs, charges, shunts compris) ; modules et angles
+  de tension : restaurés pour tous les bus, puisque chaque calcul les modifie tous ;
+- branches marquées, plus les branches à prises (`PiModelArray`, modifiables par trop de chemins
+  pour être suivies) ;
+- un seul état peut s'appuyer sur le suivi : le dernier sauvegardé ou restauré complètement. Les
+  autres font une restauration complète, puis reprennent le suivi. Ajouter ou retirer un bus ou une
+  branche invalide le suivi.
+
+Setters instrumentés : `setDisabled` (bus, branches, shunts, générateurs), cibles P/Q des
+générateurs et charges, `initialTargetP`, participation, type de contrôle, statut des charges
+d'origine, B/G des shunts, activation des contrôles de tension et de puissance réactive, gel de Q,
+type de limite Q, `connectedSide1/2`, `a1`/`r1` des `SimplePiModel`.
+
+**Vérification.** Avec `-Dolf.networkState.checkIncrementalRestore=true`, chaque restauration
+incrémentale est comparée à une sauvegarde complète de l'état restauré, et une exception est levée
+au premier écart. Aucun écart n'a été détecté :
+
+- sur les 1488 tests ;
+- sur les 7422 contingences en NR pur (1 021 140 violations) ;
+- sur les 7422 contingences en configuration par défaut (boucles externes actives,
+  1 062 061 violations, identique à avant).
+
+La restauration complète reste disponible avec `-Dolf.networkState.noIncrementalRestore=true`.
+
+| A/B alterné, NR pur, 1 thread | Passe 1 | Passe 2 | Passe 3 | Moyenne |
+|---|---|---|---|---|
+| Restauration vectorisée complète (`2d183a3`) | 74,8 s | 77,1 s | 73,5 s | 75,2 s |
+| Restauration incrémentale (`42d48c3`) | 69,1 s | 66,2 s | 64,5 s | 66,6 s |
+
+Gain : **−8,6 s, soit −11 %**, à résultats identiques. C'est plus que la part mesurée de la
+restauration elle-même (≈ 1,2 ms par contingence) : en ne touchant plus tous les objets, on évite
+aussi de chasser du cache les données du calcul qui suit.
+
 ## Reproduire
 
 Bibliothèque native améliorée :
@@ -284,3 +330,4 @@ Configurations :
 | `c14ffe2` | `isNeeded` et contrôle d'état réaliste moins chers |
 | `839ae4a` | Restauration moins chère (bus slack exclus, boucle unique sur les générateurs) |
 | `839ae9b` | Sauvegarde/restauration d'état vectorisée (tableaux plats) |
+| `42d48c3` | Restauration d'état incrémentale (setters qui marquent les éléments modifiés) |
