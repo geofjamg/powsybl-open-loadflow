@@ -68,6 +68,15 @@ public final class OlfN1Bench {
                 .map(l -> new Contingency(l.getId(), new BranchContingency(l.getId())))
                 .collect(Collectors.toList());
         List<Contingency> contingencies = contingencies0;
+        String only = System.getProperty("only");
+        if (only != null) {
+            try {
+                Set<String> keep = new HashSet<>(java.nio.file.Files.readAllLines(Path.of(only)));
+                contingencies = contingencies.stream().filter(c -> keep.contains(c.getId())).collect(Collectors.toList());
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
         String excl = System.getProperty("exclude");
         if (excl != null) {
             try {

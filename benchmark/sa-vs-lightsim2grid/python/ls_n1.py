@@ -30,7 +30,7 @@ out = {}
 for cfg in configs:
     outer = "outer" in cfg
     grid, V = build(outer)
-    sa = ContingencyAnalysisCPP(grid)
+    sa = ContingencyAnalysisCPP(grid, "viol" in cfg)
     if outer:
         print("available algos", sa.available_algorithm_names())
         sa.change_algorithm("NROuter_KLU")
@@ -59,6 +59,9 @@ for cfg in configs:
     except Exception as e:
         res["linear_solver_stats"] = repr(e)
     res["per_cont_ms"] = 1000 * t_compute / nl
+    if "viol" in cfg:
+        t = time.perf_counter(); viol = sa.get_violations(); res["get_violations_s"] = time.perf_counter() - t
+        res["violations"] = int(sum(len(v) for v in viol))
     print(json.dumps(res, indent=1))
     out[cfg] = res
 json.dump(out, open(sys.argv[3] if len(sys.argv) > 3 else "/dev/null", "w"), indent=1)
