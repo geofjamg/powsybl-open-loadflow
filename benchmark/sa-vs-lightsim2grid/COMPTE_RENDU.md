@@ -2,152 +2,145 @@
 
 Branche : `claude/clever-edison-qs6x0z`. Les commits sont listés à la fin.
 
-L'objectif était de rapprocher l'analyse de sécurité N-1 d'OpenLoadFlow (OLF) de celle de
+L'objectif était d'amener l'analyse de sécurité N-1 d'OpenLoadFlow (OLF) au niveau de
 lightsim2grid (LS2G). Le diagnostic de départ est dans [RESUME.md](RESUME.md) et
 [README.md](README.md).
 
 ## Résultat
 
 Le cas testé est `case6515rte` en N-1 sur les 7422 lignes, dont 2162 créent un îlot, sur 4 vCPU.
-Toutes les mesures ci-dessous ont été prises le même jour, sur la même machine. Pour OLF, le code
-d'origine et la branche ont été **exécutés en alternance (A/B)**, car le bruit de la machine est
-important : la même mesure varie de ±15 % d'une heure à l'autre.
+OLF d'origine (commit `16838da`) et OLF branche ont été **exécutés en alternance (A/B)**, sur la
+même machine et dans le même créneau, à partir de classes figées. LS2G 1.3.0 a été lancé juste
+après. Le bruit de la machine est de l'ordre de ±10 à 15 %.
 
-| Configuration | OLF d'origine | **OLF branche** | Gain | LS2G | Écart restant, OLF / LS2G |
+| Configuration | OLF d'origine | **OLF branche** | Gain | LS2G | Écart OLF / LS2G : avant → après |
 |---|---|---|---|---|---|
-| NR pur, 1 thread, 7422 contingences (îlots calculés) | 357 s | **211 s** | ×1,7 | 47,4 s (51,5 s avec violations) | ×4,5 (avant : ×7,5) |
-| NR pur, 4 threads, 7422 contingences | 147 s | **76 s** | ×1,9 | 15,8 s | ×4,8 (avant : ×9,3) |
-| NR pur, 1 thread, 5260 contingences sans îlot | 186 s | **94 s** | ×2,0 | 30,7 s ¹ | ×3,1 (avant : ×6,1) |
-| Paramètres par défaut (boucles externes), 1 thread | 532 s | **393 s** | ×1,35 | 262 s ² | ×1,5 (avant : ×2,0) |
+| NR pur (slack unique, sans limites réactives), 1 thread | 304,6 s | **70,7 s** | **×4,3** | 48 à 54 s ¹ | ×6 → **×1,3 à 1,5** |
+| NR pur, 4 threads | 129,4 s | **36,8 s** | **×3,5** | 15,7 s | ×8 → **×2,3** |
+| Paramètres par défaut OLF (boucles externes), 1 thread | 493,5 s | **306,8 s** | ×1,6 | 259,4 s ² | ×1,9 → **×1,2** |
 
-¹ LS2G ignore les contingences qui créent un îlot.
+¹ 47,9 s avec le calcul des violations activé dans LS2G, qui en produit 2,8 M non filtrées.
 ² LS2G `NROuter_KLU`, avec ses boucles externes qui reproduisent celles d'OLF.
 
-**Les résultats sont strictement identiques** avant et après les modifications : mêmes statuts de
-convergence, et même nombre de violations (1 021 140 en NR pur, 1 062 061 en configuration par
-défaut). Les tests OLF passent : **1487 tests, 0 échec**, comme sur le code d'origine.
+- **Résultats identiques** avant et après : mêmes statuts de convergence, et même nombre de
+  violations (1 021 140 en NR pur, 1 062 061 en configuration par défaut).
+- **Tests OLF : 1488, 0 échec**. L'origine en comptait 1487 ; un test de non-régression a été
+  ajouté.
 
-**L'objectif « aussi rapide que lightsim2grid » n'est pas atteint.** L'écart est divisé par 1,7 à 2.
-La partie solveur (KLU) est maintenant au niveau de LS2G. Ce qui reste vient du code Java autour du
-solveur, et surtout des contingences qui créent un îlot (voir plus bas).
+**La parité n'est pas atteinte.** En mono-thread, OLF est maintenant à 1,3–1,5 fois LS2G, contre
+6 fois au départ. Le reste de l'écart est expliqué plus bas. Une partie ne dépend pas de ce dépôt
+(bibliothèque native KLU de powsybl).
+
+## Où va le temps maintenant
+
+Mesures chronométrées en NR pur sur 1 thread, en moyenne par contingence :
+
+| Poste | Avant | Après | LS2G |
+|---|---|---|---|
+| Factorisations complètes KLU (`klu_analyze` + `klu_factor`) | 7424 | **2** | 1 |
+| KLU (`klu_refactor` + `rgrowth` + résolution, natif) | ≈ 14 ms | **≈ 3,2 ms** | ≈ 3 ms |
+| Reconstructions de structure (index, jacobienne Java, vecteurs) | 3380 | **4** | 0 |
+| Remplissage de la jacobienne, mismatch, mise à jour des transits | ≈ 12 ms | ≈ 3,2 ms | (inclus dans le C++) |
+| Détection des violations | ≈ 3,6 ms | ≈ 0,9 ms | ≈ 0,5 ms (non filtrées) |
+| Restauration de l'état réseau | ≈ 1,9 ms | ≈ 1,6 ms | 0 |
+| **Total par contingence** | **≈ 41 ms** | **≈ 9,5 ms** | **≈ 6,5 à 7 ms** |
 
 ## Modifications réalisées
 
-### 1. Numérotation de la jacobienne alignée et CSC triée (gain sur toutes les opérations KLU)
+### 1. Solveur linéaire (KLU)
 
-- **Problème.** En mode vectorisé, les équations (colonnes) sont rangées
-  [équations simples, tout P, tout Q] et les variables (lignes) par bus, sous la forme φ₀, V₀, φ₁…
-  La diagonale était vide. KLU, via BTF puis AMD, produisait alors **44 % de remplissage en plus**,
-  et toutes ses opérations coûtaient environ deux fois plus.
-- **Correction.**
-  - `EquationSystem` accepte un *provider* qui associe à chaque type d'équation la variable
-    diagonale du même élément. Il est défini pour l'AC dans `AcEquationSystemCreator` : P→φ, Q→V,
-    V→V, etc.
-  - `EquationSystemIndex` numérote les variables dans l'ordre des colonnes.
-  - Le vecteur d'état est permuté si une renumérotation intervient en cours de calcul.
-  - `AcNetworkVector` invalide son cache de lignes lors d'un changement d'ordre des équations.
-- **Indices triés.** KLU reçoit désormais une copie CSC à indices de ligne triés, car son ordre de
-  pivotage en dépend.
-- **Effet.** Sur une même matrice, le remplissage passe de 211 114 à 148 520 non-zéros
-  (146 644 pour LS2G). `klu_refactor` passe de 2,6 à 1,4 ms, `klu_analyze` de 9 à 4,6 ms.
+- **Numérotation alignée des variables sur les équations** (`EquationSystem`,
+  `EquationSystemIndex`, `AcEquationSystemCreator.getDiagonalVariableType`).
+  - En mode vectorisé, la diagonale de la jacobienne était vide, ce qui donnait **+44 %** de
+    remplissage LU.
+  - Chaque équation est maintenant associée à sa variable diagonale : P↔φ, Q↔V, V↔V, etc.
+  - Le vecteur d'état est permuté lorsqu'une renumérotation intervient en cours de calcul.
+- **Matrice CSC triée transmise à KLU**, dont l'ordonnancement dépend de l'ordre des indices.
+- **`klu_refactor` au lieu de `klu_factor`** après le déclenchement d'une ligne, avec le contrôle
+  `rgrowth` et un repli sur `klu_factor` si nécessaire.
+- **Structure LU conservée quand la jacobienne rétrécit** (`JacobianLuStructure`) : les valeurs
+  sont projetées sur la structure précédente, avec l'identité pour les équations retirées.
 
-### 2. `klu_refactor` au lieu de `klu_factor` après un déclenchement
+### 2. Contingences créant un îlot : mode fantôme de l'index
 
-- **Problème.** La désactivation des termes d'une ligne (`VALUES_AND_ZEROS_INVALID`) déclenchait une
-  factorisation numérique complète à chaque contingence.
-- **Correction.** Le motif creux est conservé, donc `update(true)` suffit : `klu_refactor` avec
-  contrôle `rgrowth`, et repli automatique sur `klu_factor` si besoin.
-- **Effet.** Grâce à l'alignement du point 1, il ne reste **aucun échec de refactorisation**
-  (1507 échecs sans alignement).
+Ce mode n'est actif qu'en analyse de sécurité AC, avec le solveur Newton-Raphson, en équilibré.
 
-### 3. Structure LU conservée quand des bus sont isolés
+- **Équations et variables fantômes.** Une équation désactivée garde sa colonne (fantôme). Une
+  variable qui n'est plus référencée garde sa ligne (orpheline).
+- **Contenu des colonnes fantômes.** Elles valent l'identité dans la jacobienne et zéro dans les
+  vecteurs de mismatch et de cibles. Le critère d'arrêt du Newton ne les compte pas.
+- **Décision sur l'effet net.** Les décisions structurelles sont prises à la mise à jour de l'index.
+  Les activations transitoires, faites quand un bus est réactivé, s'annulent. S'il reste de vraies
+  nouvelles équations, l'index est reconstruit comme avant.
+- **Effet.** Sur les 2162 contingences avec îlot, le temps passe de 59 s à 22 s. Une contingence
+  avec îlot ne coûte plus davantage qu'une contingence sans îlot.
 
-Nouvelle classe `JacobianLuStructure`. Quand la jacobienne perd des équations et des variables (bus
-d'un îlot), ses valeurs sont projetées sur la structure LU précédente :
+### 3. Travail Java par itération et par contingence
 
-- les équations et variables retirées sont remplacées par l'identité (1 sur la diagonale, second
-  membre nul) ;
-- le second membre et la solution sont projetés ;
-- la LU n'est que **refactorisée**, aussi bien sur la contingence que lors de la restauration.
+| Poste | Modification | Avant | Après |
+|---|---|---|---|
+| Remplissage de la jacobienne | « Scatter-add » direct à partir d'indices mémorisés ; plus de parcours de `TreeMap` | 1,74 ms | ≈ 0,5 ms |
+| Évaluation du mismatch | Tables aplaties (terme, élément, colonne) | 0,50 ms | 0,09 ms |
+| Mise à jour d'état (transits) | Un seul `sinAndCos` par branche (θ₁ = ξ + d, θ₂ = ξ − d) ; courants calculés paresseusement | 0,84 ms | 0,55 ms |
+| Vecteur des cibles | Mise à jour partielle (bus modifiés et colonnes fantômes basculées) au lieu d'un recalcul complet | 1,7 ms | 0,03 ms |
+| Détection des violations | Côtés de branche surveillés précompilés avec le seuil minimal ; chemin détaillé seulement en cas de dépassement | ≈ 3,6 ms | ≈ 0,9 ms |
 
-Effet : sur les 7422 contingences, on passe de **3380 à 2** factorisations complètes, et le temps
-KLU total de ≈ 105 s à ≈ 26 s, soit le niveau de LS2G (≈ 23 s).
+Divers :
 
-### 4. Réduction du travail Java
+- **Restauration de l'état :**
+  - les générateurs sont restaurés depuis des tableaux ;
+  - le statut des charges est versionné : il n'est réécrit que s'il a changé.
+- **Contrôles moins coûteux :**
+  - `MonitoringVoltageOuterLoop.isNeeded` fait d'abord un pré-test bon marché ;
+  - le contrôle d'état non réaliste ne cherche le bus que si la tension est hors plage.
 
-- **Remplissage rapide de la jacobienne.** Chaque entrée du vecteur de dérivées mémorise l'indice
-  de la valeur de matrice qu'elle alimente. Les mises à jour suivantes font un simple
-  « scatter-add », sans fusion de lignes ni lambda par élément. Le remplissage passe de 1,74 à
-  0,60 ms.
-- **Courants de branche paresseux.** Ils étaient recalculés (`hypot`) pour toutes les branches à
-  chaque itération ; ils ne sont plus calculés qu'à la lecture.
-- **`EquationArray.der` réécrit pour les termes non vectorisés**, sans parcours de `TreeMap` par
-  ligne ni allocation par élément.
-- **Sauvegarde et restauration de l'état des générateurs** dans des tableaux, au lieu de tables
-  indexées par identifiant.
-- **Reconstruction de structure moins chère** : table de hachage pour la numérotation alignée, et
-  matrice pré-dimensionnée.
+### 4. Bugs corrigés en chemin
 
-### 5. Correction de bug
-
-L'alignement a mis en évidence un bug latent dans `PiModelArray.shiftOneTapPositionToChangeA1`.
-Après avoir avancé d'une prise, la méthode pouvait revenir à la prise de départ dès que α n'était
-pas exactement 0 (par exemple 1e-19). Il est corrigé.
+- **`PiModelArray.shiftOneTapPositionToChangeA1`.** Après avoir avancé d'une prise, la méthode
+  pouvait revenir à la prise de départ dès que α n'était pas exactement 0.
+- **Restauration du statut des charges d'origine** (`BusDcState`). La table sauvegardée était
+  partagée avec la charge : après une contingence qui perd la charge, celle-ci restait
+  déconnectée pour toutes les contingences suivantes, et les actions sur cette charge étaient
+  ignorées. Un test de non-régression a été ajouté (`NetworkStateTest`) ; il échoue sur l'ancien
+  code.
 
 ### Tests modifiés
 
-- `SecondaryVoltageControlTest` : le rapport attendu a été actualisé. L'écart porte sur le
-  6ᵉ chiffre de q (24,012059 au lieu de 24,012062), dans la tolérance de convergence.
-- `EquationArrayTest.testSparseReproducibility` : la structure de matrice attendue a été mise à jour
-  (nouvelle numérotation). Sa reproductibilité a été vérifiée sur deux exécutions.
+Deux attendus figés ont été mis à jour :
 
-## Pourquoi l'écart reste d'environ ×4
+- `SecondaryVoltageControlTest` : écart au 6ᵉ chiffre dans un rapport, dans la tolérance de
+  convergence.
+- `EquationArrayTest.testSparseReproducibility` : nouvelle numérotation, dont la reproductibilité a
+  été vérifiée.
 
-En NR pur sur 1 thread (211 s), le temps se répartit ainsi :
+## Ce qui reste, et pourquoi
 
-| Poste | Estimation | Commentaire |
-|---|---|---|
-| **2162 contingences créant un îlot** | **≈ 115 s** | ≈ 55 ms chacune, contre ≈ 18 ms pour une contingence sans îlot |
-| Itérations NR en Java (mismatch, mise à jour de l'état et des transits, remplissage) | ≈ 40 s | |
-| KLU | ≈ 26 s | équivalent à LS2G |
-| Détection des violations | ≈ 25 s | 1 M violations produites ; LS2G les calcule en ≈ 4 s supplémentaires |
-| Restauration de l'état (`NetworkState.restore`) | ≈ 15 s | |
+1. **KLU via powsybl-math-native : ≈ 3,2 ms par contingence, contre ≈ 3 ms pour LS2G avec plus
+   d'itérations.** Chaque `update` de powsybl-math-native :
+   - fait systématiquement un `klu_rgrowth`, soit ≈ 0,35 ms ;
+   - copie les tableaux de la matrice à l'entrée et à la sortie de JNI
+     (`Get/Release*ArrayElements` en mode 0), soit ≈ 0,3 ms.
 
-**Principale piste restante : les contingences qui créent un îlot.** OLF désactive les équations
-et variables des bus isolés, ce qui change la structure du système. À chaque îlot, puis à chaque
-restauration, il faut donc reconstruire :
-
-- l'index d'équations et la renumérotation ;
-- la jacobienne Java (`initDer`) ;
-- les vecteurs de mismatch et de cibles ;
-- les caches de `AcNetworkVector`.
-
-KLU ne coûte plus rien sur ce chemin, mais ce Java représente ≈ 15 ms par reconstruction, deux fois
-par contingence. LS2G, lui, **masque** les bus isolés par des équations identité *sans changer la
-structure*.
-
-L'équivalent dans OLF serait de garder dans l'index des colonnes et lignes « fantômes » pour les
-équations et variables désactivées (identité dans la jacobienne, zéro dans les mismatches). C'est
-un changement de sémantique profond : `isActive`, `EquationArray.elementActive`, les vecteurs, les
-solveurs et les boucles externes sont concernés. Je ne l'ai pas fait sans revue dédiée. Le gain
-estimé est de ≈ 80 à 100 s, ce qui ramènerait OLF à ≈ 110–130 s, soit environ ×2,5 de LS2G.
-
-**Autres pistes.**
-
-- **Réduire le Java par itération.** Évaluer les mismatches directement à partir des tableaux de
-  transits, et fusionner la mise à jour d'état avec l'évaluation.
-- **Restauration incrémentale.** Ne restaurer que les éléments modifiés par la contingence, plus les
-  tensions.
-- **Contrôle `rgrowth` dans powsybl-math-native.** Il coûte ≈ 0,35 ms par refactorisation ;
-  LS2G ne le fait pas par défaut. Le rendre optionnel demande une évolution de la bibliothèque
-  native, hors de ce dépôt.
+   Une refactorisation coûte ainsi 2,15 ms, contre 1,35 ms dans LS2G. Corriger cela demande une
+   évolution de **powsybl-math-native**, hors de ce dépôt : `rgrowth` optionnel,
+   `GetPrimitiveArrayCritical` et `JNI_ABORT` pour les tableaux en lecture seule.
+2. **Restauration de l'état (≈ 1,6 ms).** OLF restaure tous les bus et branches à chaque
+   contingence. Une restauration incrémentale demanderait que toute modification d'état émette un
+   événement, ce qui n'est pas le cas aujourd'hui (prises, gel de Q, participation…). Je ne l'ai
+   pas faite, à cause du risque de restauration incomplète.
+3. **Calculs Java contre C++.** Les transits et dérivées sont calculés par branche, en Java
+   (≈ 2 ms par contingence), là où LS2G fait des produits creux Ybus en C++.
+4. **Montée en charge multi-thread.** Avec 4 threads, OLF ralentit d'un facteur ≈ 2 par thread,
+   contre ≈ 1,2 pour LS2G. Le GC est négligeable (0,65 s) ; la cause est la contention mémoire,
+   avec des structures objet bien plus volumineuses.
+5. **Configuration par défaut.** Les basculements PV↔PQ de la boucle des limites réactives
+   changent encore la structure : l'équation de consigne V est remplacée par l'équation Q. Une
+   extension du mode fantôme, avec « échange » d'équation sur la même variable diagonale,
+   permettrait de l'éviter.
 
 ## Reproduire
 
 Le protocole et les scripts sont décrits dans le [README](README.md).
-
-Pour l'A/B, chaque configuration est lancée successivement sur le code d'origine et sur la
-branche, avec le même classpath de dépendances :
 
 ```bash
 java -cp <classes>:<deps>:<bench> bench.OlfN1Bench case6515rte.xiidm <cfg> 1
@@ -160,16 +153,21 @@ Configurations :
 | `nr` | NR pur, 1 thread |
 | `nr_t4` | NR pur, 4 threads |
 | `default` | paramètres par défaut |
-| `-Dexclude=islanding_lines.txt` | exclut les contingences créant un îlot |
-| `-Donly=…` | ne garde que les contingences listées |
 | suffixe `_count` | compte les appels KLU |
+| `-Dexclude=…` ou `-Donly=…` | filtre les contingences |
 
 ## Commits
 
 | Commit | Contenu |
 |---|---|
-| `287a77a` | LU de la jacobienne AC : numérotation alignée, CSC triée, `klu_refactor` après déclenchement, correction de `PiModelArray` |
-| `1947e8a` | Structure LU conservée quand la jacobienne rétrécit (îlots) |
-| `a99b6d8` | Courants paresseux, `EquationArray.der` sans `TreeMap` par ligne, états des générateurs en tableaux |
-| `529723b` | Remplissage rapide des valeurs de jacobienne (scatter-add) |
+| `287a77a` | Numérotation alignée, CSC triée, `klu_refactor`, correction de `PiModelArray` |
+| `1947e8a` | Structure LU conservée quand la jacobienne rétrécit |
+| `a99b6d8` | Courants paresseux, `der` sans `TreeMap` par ligne, états des générateurs en tableaux |
+| `529723b` | Remplissage rapide de la jacobienne (scatter-add) |
 | `bf33b1c` | Reconstruction de structure moins chère |
+| `df7e5e6` | Détection des violations précompilée |
+| `3ac7f6e` | Correction de la restauration des charges, mismatch aplati, un seul `sinAndCos` par branche |
+| `3234db3` | Mode fantôme (îlots sans changement de structure) |
+| `b168839` | Suppression des `TreeMap` des chemins chauds, restauration des charges versionnée |
+| `e9d03e8` | Mise à jour partielle du vecteur des cibles |
+| `c14ffe2` | `isNeeded` et contrôle d'état réaliste moins chers |
