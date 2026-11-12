@@ -93,16 +93,11 @@ public class BusDcState extends ElementState<LfBus> {
         super.restore();
         List<LfGenerator> generators = element.getGenerators();
         for (int i = 0; i < generators.size(); i++) {
-            generators.get(i).setTargetP(generatorsTargetP[i]);
-        }
-        for (int i = 0; i < generators.size(); i++) {
-            generators.get(i).setInitialTargetP(generatorsInitialTargetP[i]);
-        }
-        for (int i = 0; i < generators.size(); i++) {
-            generators.get(i).setParticipating(participatingGenerators[i]);
-        }
-        for (int i = 0; i < generators.size(); i++) {
-            generators.get(i).setDisabled(disablingStatusGenerators[i]);
+            LfGenerator generator = generators.get(i);
+            generator.setTargetP(generatorsTargetP[i]);
+            generator.setInitialTargetP(generatorsInitialTargetP[i]);
+            generator.setParticipating(participatingGenerators[i]);
+            generator.setDisabled(disablingStatusGenerators[i]);
         }
         for (int i = 0; i < loadStates.size(); i++) {
             LfLoad load = element.getLoads().get(i);

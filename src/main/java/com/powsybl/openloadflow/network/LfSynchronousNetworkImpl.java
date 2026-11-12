@@ -85,8 +85,12 @@ public class LfSynchronousNetworkImpl implements LfSynchronousNetwork {
     public void setExcludedSlackBuses(Set<LfBus> excludedSlackBuses) {
         Objects.requireNonNull(excludedSlackBuses);
         // Filter buses that are only in this synchronous network
-        Set<LfBus> filteredExcludedSlackBuses = new HashSet<>(excludedSlackBuses);
-        filteredExcludedSlackBuses.retainAll(getBuses());
+        Set<LfBus> filteredExcludedSlackBuses = new HashSet<>();
+        for (LfBus bus : excludedSlackBuses) {
+            if (bus.getNumSC() == numSC && bus.getNetwork() == lfNetwork) {
+                filteredExcludedSlackBuses.add(bus);
+            }
+        }
         if (!filteredExcludedSlackBuses.equals(this.excludedSlackBuses)) {
             this.excludedSlackBuses = filteredExcludedSlackBuses;
             invalidateSlackAndReference();
