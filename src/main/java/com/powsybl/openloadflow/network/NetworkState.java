@@ -24,9 +24,10 @@ public class NetworkState {
 
     private final LfNetwork network;
 
-    private final List<BusState> busStates;
+    // states of buses and branches, stored in flat arrays (much better memory locality than one object per element)
+    private final BusesVectorState busStates;
 
-    private final List<BranchState> branchStates;
+    private final BranchesVectorState branchStates;
 
     private final List<HvdcState> hvdcStates;
 
@@ -34,7 +35,7 @@ public class NetworkState {
 
     private final List<AreaState> areaStates;
 
-    protected NetworkState(LfNetwork network, List<BusState> busStates, List<BranchState> branchStates, List<HvdcState> hvdcStates,
+    protected NetworkState(LfNetwork network, BusesVectorState busStates, BranchesVectorState branchStates, List<HvdcState> hvdcStates,
                            Set<LfBus> excludedSlackBuses, List<AreaState> areaStates) {
         this.network = Objects.requireNonNull(network);
         this.busStates = Objects.requireNonNull(busStates);
@@ -48,8 +49,8 @@ public class NetworkState {
         Objects.requireNonNull(network);
         LOGGER.trace("Saving network state");
         network.setGeneratorsInitialTargetPToTargetP();
-        List<BusState> busStates = ElementState.save(network.getBuses(), BusState::save);
-        List<BranchState> branchStates = ElementState.save(network.getBranches(), BranchState::save);
+        BusesVectorState busStates = BusesVectorState.save(network.getBuses());
+        BranchesVectorState branchStates = BranchesVectorState.save(network.getBranches());
         List<HvdcState> hvdcStates = ElementState.save(network.getHvdcs(), HvdcState::save);
         List<AreaState> areaStates = ElementState.save(network.getAreas(), AreaState::save);
         Set<LfBus> excludedSlackBuses = network.getSynchronousNetworks().stream()
@@ -60,8 +61,8 @@ public class NetworkState {
 
     public void restore() {
         LOGGER.trace("Restoring network state");
-        ElementState.restore(busStates);
-        ElementState.restore(branchStates);
+        busStates.restore();
+        branchStates.restore();
         ElementState.restore(hvdcStates);
         ElementState.restore(areaStates);
         // Set excluded slack buses of each synchronous network

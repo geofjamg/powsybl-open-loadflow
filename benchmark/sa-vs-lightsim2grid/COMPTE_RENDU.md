@@ -211,6 +211,36 @@ Deux attendus figés ont été mis à jour :
    extension du mode fantôme, avec « échange » d'équation sur la même variable diagonale,
    permettrait de l'éviter.
 
+## Essai : sauvegarde d'état vectorisée
+
+`NetworkState` stocke maintenant l'état des bus (avec générateurs, charges et shunts) et des
+branches dans des tableaux plats indexés par numéro d'élément (`BusesVectorState`,
+`BranchesVectorState`), au lieu d'un objet `BusState`/`BranchState` par élément. Les setters sont
+appelés exactement dans le même ordre qu'avant, donc le comportement est identique (1488 tests OK,
+mêmes 1 021 140 violations sur le benchmark).
+
+| Mesure | Avant | Vectorisé |
+|---|---|---|
+| Restauration des branches (micro-benchmark) | 306 µs | 157 µs (−49 %) |
+| Restauration des bus (micro-benchmark) | 589 µs | 550 µs (−7 %) |
+| Benchmark complet, A/B alterné ×3 (bibliothèque native améliorée) | 78,95 / 80,62 / 81,17 s | 79,42 / 80,46 / 79,41 s |
+
+Gain sur le benchmark complet : ≈ 0,5 s en moyenne (80,2 → 79,8 s), dans le bruit de la machine.
+Pourquoi c'est si peu :
+
+- le coût de la restauration des bus vient des **setters**, pas de la lecture de l'état : chaque
+  `setDisabled`, `setV`, `setGeneratorVoltageControlEnabledAndRecomputeTargetQ`… notifie des
+  listeners et met à jour des champs dérivés. Les tableaux plats ne changent rien à ce coût ;
+- on ne peut pas sauter les setters dont la valeur n'a pas changé sans risque : par exemple
+  `LfBus.setDisabled` se propage aux shunts et aux HVDC, qui ne sont pas sauvegardés à part ;
+- la restauration des branches est divisée par deux, mais elle ne pèse que ≈ 0,3 ms sur ≈ 10 ms
+  par contingence.
+
+Pour aller plus loin, il faudrait des setters « silencieux » (écriture directe des champs, puis
+une seule notification groupée vers le système d'équations), ou une restauration incrémentale des
+seuls éléments touchés par la contingence. Les deux demandent de revoir le modèle `LfNetwork` et
+ses listeners.
+
 ## Reproduire
 
 Bibliothèque native améliorée :
