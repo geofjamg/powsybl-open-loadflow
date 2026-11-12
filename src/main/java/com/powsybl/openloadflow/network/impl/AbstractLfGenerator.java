@@ -122,6 +122,7 @@ public abstract class AbstractLfGenerator extends AbstractLfInjection implements
         if (targetP != this.targetP) {
             double oldTargetP = this.targetP;
             this.targetP = targetP;
+            onStateChange();
             bus.invalidateGenerationTargetP();
             for (LfNetworkListener listener : bus.getNetwork().getListeners()) {
                 listener.onGenerationActivePowerTargetChange(this, oldTargetP, targetP);
@@ -146,7 +147,10 @@ public abstract class AbstractLfGenerator extends AbstractLfInjection implements
 
     @Override
     public void setGeneratorControlType(GeneratorControlType generatorControlType) {
-        this.generatorControlType = Objects.requireNonNull(generatorControlType);
+        if (generatorControlType != this.generatorControlType) {
+            this.generatorControlType = Objects.requireNonNull(generatorControlType);
+            onStateChange();
+        }
     }
 
     @Override
@@ -485,7 +489,17 @@ public abstract class AbstractLfGenerator extends AbstractLfInjection implements
 
     @Override
     public void setDisabled(boolean disabled) {
-        this.disabled = disabled;
+        if (disabled != this.disabled) {
+            this.disabled = disabled;
+            onStateChange();
+        }
+    }
+
+    @Override
+    protected void onStateChange() {
+        if (bus != null) {
+            bus.getNetwork().onBusStateChange(bus);
+        }
     }
 
     @Override

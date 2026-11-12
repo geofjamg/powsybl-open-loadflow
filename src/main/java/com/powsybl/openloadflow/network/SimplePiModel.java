@@ -28,6 +28,8 @@ public class SimplePiModel implements PiModel {
     private double r1 = 1;
     private double a1 = 0;
 
+    private LfBranch branch; // to notify state changes
+
     private static final String NO_TAP_POSITION_ERROR = "No tap position change in simple Pi model implementation";
 
     @Override
@@ -128,8 +130,17 @@ public class SimplePiModel implements PiModel {
     }
 
     public SimplePiModel setR1(double r1) {
-        this.r1 = r1;
+        if (r1 != this.r1) {
+            this.r1 = r1;
+            onStateChange();
+        }
         return this;
+    }
+
+    private void onStateChange() {
+        if (branch != null && branch.getNetwork() != null) {
+            branch.getNetwork().onBranchStateChange(branch);
+        }
     }
 
     @Override
@@ -139,7 +150,10 @@ public class SimplePiModel implements PiModel {
 
     @Override
     public SimplePiModel setA1(double a1) {
-        this.a1 = a1;
+        if (a1 != this.a1) {
+            this.a1 = a1;
+            onStateChange();
+        }
         return this;
     }
 
@@ -203,7 +217,7 @@ public class SimplePiModel implements PiModel {
 
     @Override
     public void setBranch(LfBranch branch) {
-        // nothing to set
+        this.branch = branch;
     }
 
     @Override

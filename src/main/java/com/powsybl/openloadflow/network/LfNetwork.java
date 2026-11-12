@@ -88,6 +88,8 @@ public class LfNetwork extends AbstractPropertyBag implements PropertyBag, LfEle
 
     private final List<LfNetworkListener> listeners = new ArrayList<>();
 
+    private final StateChangeTracker stateChangeTracker = new StateChangeTracker();
+
     private Validity validity = Validity.VALID;
 
     private final GraphConnectivityFactory<LfBus, LfBranch> connectivityFactory;
@@ -220,6 +222,7 @@ public class LfNetwork extends AbstractPropertyBag implements PropertyBag, LfEle
 
     public void addBranch(LfBranch branch) {
         Objects.requireNonNull(branch);
+        stateChangeTracker.invalidate();
         branch.setNum(branches.size());
         branches.add(branch);
         branchesById.put(branch.getId(), branch);
@@ -275,6 +278,7 @@ public class LfNetwork extends AbstractPropertyBag implements PropertyBag, LfEle
         }
         invalidateZeroImpedanceNetworks();
 
+        stateChangeTracker.invalidate();
         // renumber all branches
         for (int i = 0; i < branches.size(); i++) {
             branches.get(i).setNum(i);
@@ -295,6 +299,7 @@ public class LfNetwork extends AbstractPropertyBag implements PropertyBag, LfEle
 
     public void addBus(LfBus bus) {
         Objects.requireNonNull(bus);
+        stateChangeTracker.invalidate();
         bus.setNum(busesByIndex.size());
         busesByIndex.add(bus);
         busesById.put(bus.getId(), bus);
@@ -798,6 +803,24 @@ public class LfNetwork extends AbstractPropertyBag implements PropertyBag, LfEle
 
     public void removeListener(LfNetworkListener listener) {
         listeners.remove(listener);
+    }
+
+    public StateChangeTracker getStateChangeTracker() {
+        return stateChangeTracker;
+    }
+
+    /**
+     * To be called by setters of bus state attributes (including the ones of bus generators, loads and shunts).
+     */
+    public void onBusStateChange(LfBus bus) {
+        stateChangeTracker.onBusChange(bus.getNum());
+    }
+
+    /**
+     * To be called by setters of branch state attributes (including the ones of the branch pi model).
+     */
+    public void onBranchStateChange(LfBranch branch) {
+        stateChangeTracker.onBranchChange(branch.getNum());
     }
 
     public List<LfNetworkListener> getListeners() {

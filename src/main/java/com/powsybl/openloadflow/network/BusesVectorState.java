@@ -7,6 +7,7 @@
  */
 package com.powsybl.openloadflow.network;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -37,6 +38,8 @@ public final class BusesVectorState {
     private final double[] shuntG;
     private final double[] svcShuntB;
     private final LfBus.QLimitType[] qLimitType;
+    // only used to check incremental restore: shunts are enabled or disabled with their bus
+    private final byte[] shuntsDisabled; // bit 0: shunt disabled, bit 1: controller shunt disabled
 
     // generators, bus generators are in [generatorStart[busIndex], generatorStart[busIndex + 1])
     private final int[] generatorStart;
@@ -74,6 +77,7 @@ public final class BusesVectorState {
         shuntG = new double[busCount];
         svcShuntB = new double[busCount];
         qLimitType = new LfBus.QLimitType[busCount];
+        shuntsDisabled = new byte[busCount];
         generatorStart = new int[busCount + 1];
         loadStart = new int[busCount + 1];
         int generatorCount = 0;
@@ -123,6 +127,7 @@ public final class BusesVectorState {
         LfShunt svcShunt = bus.getSvcShunt().orElse(null);
         svcShuntB[i] = svcShunt != null ? svcShunt.getB() : Double.NaN;
         qLimitType[i] = bus.getQLimitType().orElse(null);
+        shuntsDisabled[i] = (byte) ((shunt != null && shunt.isDisabled() ? 1 : 0) | (controllerShunt != null && controllerShunt.isDisabled() ? 2 : 0));
 
         List<LfGenerator> busGenerators = bus.getGenerators();
         for (int k = 0; k < busGenerators.size(); k++) {
@@ -235,5 +240,83 @@ public final class BusesVectorState {
         for (int i = 0; i < buses.length; i++) {
             restoreBus(i);
         }
+    }
+
+    /**
+     * Incremental restore: full restore of the given buses (only ones that have been modified), and voltage
+     * magnitude and angle restore of all the buses (always modified by a load flow run).
+     */
+    public void restore(StateChangeTracker tracker) {
+        int[] changed = new int[tracker.getChangedBusCount()];
+        for (int k = 0; k < changed.length; k++) {
+            changed[k] = tracker.getChangedBus(k);
+        }
+        Arrays.sort(changed); // same order as a full restore
+        for (int i : changed) {
+            restoreBus(i);
+        }
+        for (int i = 0; i < buses.length; i++) {
+            LfBus bus = buses[i];
+            bus.setAngle(angle[i]);
+            bus.setV(voltage[i]);
+        }
+    }
+
+    boolean isCompatible(List<LfBus> busList) {
+        if (busList.size() != buses.length) {
+            return false;
+        }
+        for (int i = 0; i < buses.length; i++) {
+            if (busList.get(i) != buses[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Find a difference with another state of the same buses (for incremental restore checking).
+     *
+     * @return the description of the first difference found, or null if both states are the same
+     */
+    String findDifference(BusesVectorState other) {
+        for (int i = 0; i < buses.length; i++) {
+            if (disabled[i] != other.disabled[i]
+                    || Double.compare(angle[i], other.angle[i]) != 0
+                    || Double.compare(voltage[i], other.voltage[i]) != 0
+                    || Double.compare(generationTargetQ[i], other.generationTargetQ[i]) != 0
+                    || generationTargetQFrozen[i] != other.generationTargetQFrozen[i]
+                    || voltageControlEnabled[i] != other.voltageControlEnabled[i]
+                    || reactiveControlEnabled[i] != other.reactiveControlEnabled[i]
+                    || shuntVoltageControlEnabled[i] != other.shuntVoltageControlEnabled[i]
+                    || Double.compare(controllerShuntB[i], other.controllerShuntB[i]) != 0
+                    || Double.compare(controllerShuntG[i], other.controllerShuntG[i]) != 0
+                    || Double.compare(shuntB[i], other.shuntB[i]) != 0
+                    || Double.compare(shuntG[i], other.shuntG[i]) != 0
+                    || Double.compare(svcShuntB[i], other.svcShuntB[i]) != 0
+                    || qLimitType[i] != other.qLimitType[i]
+                    || shuntsDisabled[i] != other.shuntsDisabled[i]) {
+                return "bus " + buses[i].getId();
+            }
+        }
+        for (int g = 0; g < generators.length; g++) {
+            if (Double.compare(generatorTargetP[g], other.generatorTargetP[g]) != 0
+                    || Double.compare(generatorInitialTargetP[g], other.generatorInitialTargetP[g]) != 0
+                    || generatorParticipating[g] != other.generatorParticipating[g]
+                    || generatorDisabled[g] != other.generatorDisabled[g]
+                    || generatorControlType[g] != other.generatorControlType[g]) {
+                return "generator " + generators[g].getId();
+            }
+        }
+        for (int l = 0; l < loads.length; l++) {
+            if (Double.compare(loadTargetP[l], other.loadTargetP[l]) != 0
+                    || Double.compare(loadAbsVariableTargetP[l], other.loadAbsVariableTargetP[l]) != 0
+                    || Double.compare(loadTargetQ[l], other.loadTargetQ[l]) != 0
+                    || !Arrays.equals(originalLoadIds[l], other.originalLoadIds[l])
+                    || !Arrays.equals(originalLoadsDisabled[l], other.originalLoadsDisabled[l])) {
+                return "load " + loads[l].getId();
+            }
+        }
+        return null;
     }
 }

@@ -59,10 +59,16 @@ public final class LfStandbyAutomatonShunt extends AbstractLfShunt {
     public void setB(double b) {
         if (b != this.b) {
             this.b = b;
+            onStateChange();
             for (LfNetworkListener listener : getNetwork().getListeners()) {
                 listener.onShuntSusceptanceChange(this, b);
             }
         }
+    }
+
+    @Override
+    protected void onStateChange() {
+        getNetwork().onBusStateChange(svc.getBus());
     }
 
     private static UnsupportedOperationException createUnsupportedForStandbyAutomatonShuntException() {

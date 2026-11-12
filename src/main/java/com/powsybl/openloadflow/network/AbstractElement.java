@@ -52,8 +52,16 @@ public abstract class AbstractElement extends AbstractPropertyBag implements LfE
     public void setDisabled(boolean disabled) {
         if (disabled != this.disabled) {
             this.disabled = disabled;
+            onStateChange();
             notifyDisable();
         }
+    }
+
+    /**
+     * Called when an attribute saved by {@link NetworkState} is modified.
+     */
+    protected void onStateChange() {
+        // nothing by default
     }
 
     protected void notifyDisable() {

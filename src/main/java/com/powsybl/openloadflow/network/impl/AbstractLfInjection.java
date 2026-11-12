@@ -28,11 +28,21 @@ public abstract class AbstractLfInjection extends AbstractPropertyBag {
     }
 
     public void setInitialTargetP(double initialTargetP) {
-        this.initialTargetP = initialTargetP;
+        if (initialTargetP != this.initialTargetP) {
+            this.initialTargetP = initialTargetP;
+            onStateChange();
+        }
     }
 
     public void setInitialTargetPToTargetP() {
-        initialTargetP = targetP;
+        setInitialTargetP(targetP);
+    }
+
+    /**
+     * Called when an attribute saved by {@link com.powsybl.openloadflow.network.NetworkState} is modified.
+     */
+    protected void onStateChange() {
+        // nothing by default
     }
 
     public double getTargetP() {

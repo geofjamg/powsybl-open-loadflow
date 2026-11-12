@@ -7,6 +7,7 @@
  */
 package com.powsybl.openloadflow.network;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -30,6 +31,7 @@ public final class BranchesVectorState {
     private final int[] tapPosition;
     private final byte[] connectedSide1; // -1: not saved (disconnection not allowed), 0: false, 1: true
     private final byte[] connectedSide2;
+    private final int[] tapBranches; // branches with a tap position, always restored by incremental restore
 
     private BranchesVectorState(List<LfBranch> branchList) {
         branches = branchList.toArray(new LfBranch[0]);
@@ -43,12 +45,14 @@ public final class BranchesVectorState {
         tapPosition = new int[size];
         connectedSide1 = new byte[size];
         connectedSide2 = new byte[size];
+        int tapBranchCount = 0;
         for (int i = 0; i < size; i++) {
             LfBranch branch = branches[i];
             disabled[i] = branch.isDisabled();
             PiModel piModel = branch.getPiModel();
             if (piModel instanceof PiModelArray piModelArray) {
                 hasTapPosition[i] = true;
+                tapBranchCount++;
                 tapPosition[i] = piModel.getTapPosition();
                 // also save modified a1 and r1 and not directly a1 and r1 to avoid restoring
                 // with same values as current tap position
@@ -63,6 +67,13 @@ public final class BranchesVectorState {
             connectedSide1[i] = branch.isDisconnectionAllowedSide1() ? (byte) (branch.isConnectedSide1() ? 1 : 0) : NOT_SAVED;
             connectedSide2[i] = branch.isDisconnectionAllowedSide2() ? (byte) (branch.isConnectedSide2() ? 1 : 0) : NOT_SAVED;
         }
+        tapBranches = new int[tapBranchCount];
+        int k = 0;
+        for (int i = 0; i < size; i++) {
+            if (hasTapPosition[i]) {
+                tapBranches[k++] = i;
+            }
+        }
     }
 
     public static BranchesVectorState save(List<LfBranch> branches) {
@@ -74,22 +85,80 @@ public final class BranchesVectorState {
      */
     public void restore() {
         for (int i = 0; i < branches.length; i++) {
-            LfBranch branch = branches[i];
-            branch.setDisabled(disabled[i]);
-            PiModel piModel = branch.getPiModel();
-            if (hasTapPosition[i]) {
-                piModel.setTapPosition(tapPosition[i]);
+            restoreBranch(i);
+        }
+    }
+
+    /**
+     * Incremental restore: only branches modified since last save or restore, and branches with a tap position
+     * (their pi model have too many ways to be modified to be tracked).
+     */
+    public void restore(StateChangeTracker tracker) {
+        int[] changed = new int[tracker.getChangedBranchCount() + tapBranches.length];
+        int count = 0;
+        for (int k = 0; k < tracker.getChangedBranchCount(); k++) {
+            int i = tracker.getChangedBranch(k);
+            if (!hasTapPosition[i]) {
+                changed[count++] = i;
             }
-            piModel.setA1(a1[i]);
-            piModel.setR1(r1[i]);
-            branch.setPhaseControlEnabled(phaseControlEnabled[i]);
-            branch.setVoltageControlEnabled(voltageControlEnabled[i]);
-            if (connectedSide1[i] != NOT_SAVED) {
-                branch.setConnectedSide1(connectedSide1[i] == 1);
+        }
+        System.arraycopy(tapBranches, 0, changed, count, tapBranches.length);
+        count += tapBranches.length;
+        Arrays.sort(changed, 0, count); // same order as a full restore
+        for (int k = 0; k < count; k++) {
+            restoreBranch(changed[k]);
+        }
+    }
+
+    boolean isCompatible(List<LfBranch> branchList) {
+        if (branchList.size() != branches.length) {
+            return false;
+        }
+        for (int i = 0; i < branches.length; i++) {
+            if (branchList.get(i) != branches[i]) {
+                return false;
             }
-            if (connectedSide2[i] != NOT_SAVED) {
-                branch.setConnectedSide2(connectedSide2[i] == 1);
+        }
+        return true;
+    }
+
+    /**
+     * Find a difference with another state of the same branches (for incremental restore checking).
+     *
+     * @return the description of the first difference found, or null if both states are the same
+     */
+    String findDifference(BranchesVectorState other) {
+        for (int i = 0; i < branches.length; i++) {
+            if (disabled[i] != other.disabled[i]
+                    || Double.compare(a1[i], other.a1[i]) != 0
+                    || Double.compare(r1[i], other.r1[i]) != 0
+                    || phaseControlEnabled[i] != other.phaseControlEnabled[i]
+                    || voltageControlEnabled[i] != other.voltageControlEnabled[i]
+                    || tapPosition[i] != other.tapPosition[i]
+                    || connectedSide1[i] != other.connectedSide1[i]
+                    || connectedSide2[i] != other.connectedSide2[i]) {
+                return "branch " + branches[i].getId();
             }
+        }
+        return null;
+    }
+
+    private void restoreBranch(int i) {
+        LfBranch branch = branches[i];
+        branch.setDisabled(disabled[i]);
+        PiModel piModel = branch.getPiModel();
+        if (hasTapPosition[i]) {
+            piModel.setTapPosition(tapPosition[i]);
+        }
+        piModel.setA1(a1[i]);
+        piModel.setR1(r1[i]);
+        branch.setPhaseControlEnabled(phaseControlEnabled[i]);
+        branch.setVoltageControlEnabled(voltageControlEnabled[i]);
+        if (connectedSide1[i] != NOT_SAVED) {
+            branch.setConnectedSide1(connectedSide1[i] == 1);
+        }
+        if (connectedSide2[i] != NOT_SAVED) {
+            branch.setConnectedSide2(connectedSide2[i] == 1);
         }
     }
 }

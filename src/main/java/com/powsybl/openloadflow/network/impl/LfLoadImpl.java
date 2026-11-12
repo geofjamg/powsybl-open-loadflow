@@ -132,6 +132,7 @@ public class LfLoadImpl extends AbstractLfInjection implements LfLoad {
         if (targetP != this.targetP) {
             double oldTargetP = this.targetP;
             this.targetP = targetP;
+            onStateChange();
             bus.invalidateLoadTargetP();
             for (LfNetworkListener listener : bus.getNetwork().getListeners()) {
                 listener.onLoadActivePowerTargetChange(this, oldTargetP, targetP);
@@ -149,6 +150,7 @@ public class LfLoadImpl extends AbstractLfInjection implements LfLoad {
         if (targetQ != this.targetQ) {
             double oldTargetQ = this.targetQ;
             this.targetQ = targetQ;
+            onStateChange();
             bus.invalidateLoadTargetQ();
             for (LfNetworkListener listener : bus.getNetwork().getListeners()) {
                 listener.onLoadReactivePowerTargetChange(this, oldTargetQ, targetQ);
@@ -168,7 +170,15 @@ public class LfLoadImpl extends AbstractLfInjection implements LfLoad {
 
     @Override
     public void setAbsVariableTargetP(double absVariableTargetP) {
-        this.absVariableTargetP = absVariableTargetP;
+        if (absVariableTargetP != this.absVariableTargetP) {
+            this.absVariableTargetP = absVariableTargetP;
+            onStateChange();
+        }
+    }
+
+    @Override
+    protected void onStateChange() {
+        bus.getNetwork().onBusStateChange(bus);
     }
 
     public static double getAbsVariableTargetPPerUnit(Load load, boolean distributedOnConformLoad) {
@@ -256,6 +266,7 @@ public class LfLoadImpl extends AbstractLfInjection implements LfLoad {
     public void setOriginalLoadDisabled(String originalId, boolean disabled) {
         loadsDisablingStatus.put(originalId, disabled);
         loadsDisablingStatusVersion++;
+        onStateChange();
     }
 
     @Override
@@ -267,6 +278,7 @@ public class LfLoadImpl extends AbstractLfInjection implements LfLoad {
     public void setOriginalLoadsDisablingStatus(Map<String, Boolean> originalLoadsDisablingStatus) {
         this.loadsDisablingStatus = Objects.requireNonNull(originalLoadsDisablingStatus);
         loadsDisablingStatusVersion++;
+        onStateChange();
     }
 
     @Override

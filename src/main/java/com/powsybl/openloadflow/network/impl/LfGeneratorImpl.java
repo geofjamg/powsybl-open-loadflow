@@ -223,7 +223,10 @@ public final class LfGeneratorImpl extends AbstractLfGenerator {
 
     @Override
     public void setParticipating(boolean participating) {
-        this.participating = participating;
+        if (participating != this.participating) {
+            this.participating = participating;
+            onStateChange();
+        }
     }
 
     @Override

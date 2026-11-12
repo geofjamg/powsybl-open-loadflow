@@ -132,6 +132,7 @@ public abstract class AbstractImpedantLfBranch extends AbstractLfBranch {
         }
         if (connectedSide1 != this.connectedSide1) {
             this.connectedSide1 = connectedSide1;
+            onStateChange();
             for (LfNetworkListener listener : network.getListeners()) {
                 listener.onBranchConnectionStatusChange(this, TwoSides.ONE, connectedSide1);
             }
@@ -153,6 +154,7 @@ public abstract class AbstractImpedantLfBranch extends AbstractLfBranch {
         }
         if (connectedSide2 != this.connectedSide2) {
             this.connectedSide2 = connectedSide2;
+            onStateChange();
             for (LfNetworkListener listener : network.getListeners()) {
                 listener.onBranchConnectionStatusChange(this, TwoSides.TWO, connectedSide2);
             }

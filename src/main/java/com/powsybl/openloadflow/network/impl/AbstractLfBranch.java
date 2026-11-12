@@ -221,6 +221,7 @@ public abstract class AbstractLfBranch extends AbstractElement implements LfBran
     public void setPhaseControlEnabled(boolean phaseControlEnabled) {
         if (this.phaseControlEnabled != phaseControlEnabled) {
             this.phaseControlEnabled = phaseControlEnabled;
+            onStateChange();
             for (LfNetworkListener listener : network.getListeners()) {
                 listener.onTransformerPhaseControlChange(this, phaseControlEnabled);
             }
@@ -259,6 +260,7 @@ public abstract class AbstractLfBranch extends AbstractElement implements LfBran
     public void setVoltageControlEnabled(boolean voltageControlEnabled) {
         if (this.voltageControlEnabled != voltageControlEnabled) {
             this.voltageControlEnabled = voltageControlEnabled;
+            onStateChange();
             for (LfNetworkListener listener : network.getListeners()) {
                 listener.onTransformerVoltageControlChange(this, voltageControlEnabled);
             }
@@ -392,9 +394,15 @@ public abstract class AbstractLfBranch extends AbstractElement implements LfBran
     }
 
     @Override
+    protected void onStateChange() {
+        network.onBranchStateChange(this);
+    }
+
+    @Override
     public void setDisabled(boolean disabled) {
         if (disabled != this.disabled) {
             this.disabled = disabled;
+            onStateChange();
             notifyDisable();
             if (bus1 != null && bus2 != null) {
                 updateZeroImpedanceNetworks(disabled, LoadFlowModel.AC);

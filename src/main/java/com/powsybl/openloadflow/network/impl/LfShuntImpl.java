@@ -168,6 +168,7 @@ public class LfShuntImpl extends AbstractLfShunt {
     public void setB(double b) {
         if (b != this.b) {
             this.b = b;
+            onStateChange();
             for (LfNetworkListener listener : getNetwork().getListeners()) {
                 listener.onShuntSusceptanceChange(this, b);
             }
@@ -181,7 +182,15 @@ public class LfShuntImpl extends AbstractLfShunt {
 
     @Override
     public void setG(double g) {
-        this.g = g;
+        if (g != this.g) {
+            this.g = g;
+            onStateChange();
+        }
+    }
+
+    @Override
+    protected void onStateChange() {
+        network.onBusStateChange(bus);
     }
 
     @Override
@@ -203,6 +212,7 @@ public class LfShuntImpl extends AbstractLfShunt {
     public void setVoltageControlEnabled(boolean voltageControlEnabled) {
         if (this.voltageControlEnabled != voltageControlEnabled) {
             this.voltageControlEnabled = voltageControlEnabled;
+            onStateChange();
             for (LfNetworkListener listener : network.getListeners()) {
                 listener.onShuntVoltageControlChange(this, voltageControlEnabled);
             }

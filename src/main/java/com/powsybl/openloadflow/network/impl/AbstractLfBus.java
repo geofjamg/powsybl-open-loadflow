@@ -246,6 +246,7 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
     public void setGeneratorReactivePowerControlEnabled(boolean generatorReactivePowerControlEnabled) {
         if (this.generatorReactivePowerControlEnabled != generatorReactivePowerControlEnabled) {
             this.generatorReactivePowerControlEnabled = generatorReactivePowerControlEnabled;
+            onStateChange();
             for (LfNetworkListener listener : network.getListeners()) {
                 listener.onGeneratorReactivePowerControlChange(this, generatorReactivePowerControlEnabled);
             }
@@ -281,6 +282,7 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
     private void setGeneratorVoltageControlEnabled(boolean generatorVoltageControlEnabled) {
         if (this.generatorVoltageControlEnabled != generatorVoltageControlEnabled) {
             this.generatorVoltageControlEnabled = generatorVoltageControlEnabled;
+            onStateChange();
             for (LfNetworkListener listener : network.getListeners()) {
                 listener.onGeneratorVoltageControlChange(this, generatorVoltageControlEnabled);
             }
@@ -422,7 +424,10 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
     private void invalidateGenerationTargetQ() {
         // If generationTargetQ was frozen, it is now freed. generationTargetQ is computed according to its definition in getGenerationTargetQ()
         invalidatedGenerationTargetQ = true;
-        isGenerationTargetQFrozen = false;
+        if (isGenerationTargetQFrozen) {
+            isGenerationTargetQFrozen = false;
+            onStateChange();
+        }
     }
 
     @Override
@@ -468,6 +473,7 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
         setGeneratorVoltageControlEnabled(false);
         updateGenerationTargetQ(generationTargetQ, this.generationTargetQ);
         isGenerationTargetQFrozen = true;
+        onStateChange();
     }
 
     @Override
@@ -545,7 +551,10 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
 
     @Override
     public void setQLimitType(QLimitType qLimitType) {
-        this.qLimitType = qLimitType;
+        if (qLimitType != this.qLimitType) {
+            this.qLimitType = qLimitType;
+            onStateChange();
+        }
     }
 
     @Override
@@ -854,6 +863,11 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
     @Override
     public void setVoltageSourceConverterVoltageControl(VoltageSourceConverterVoltageControl voltageSourceConverterVoltageControl) {
         this.voltageSourceConverterVoltageControl = voltageSourceConverterVoltageControl;
+    }
+
+    @Override
+    protected void onStateChange() {
+        network.onBusStateChange(this);
     }
 
     @Override

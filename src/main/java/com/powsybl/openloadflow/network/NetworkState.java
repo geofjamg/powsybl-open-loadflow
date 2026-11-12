@@ -22,6 +22,16 @@ public class NetworkState {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(NetworkState.class);
 
+    /**
+     * If true, each incremental restore is checked against a full save of the restored state (debug).
+     */
+    private static final boolean CHECK_INCREMENTAL_RESTORE = Boolean.getBoolean("olf.networkState.checkIncrementalRestore");
+
+    /**
+     * If false, restore is always a full one.
+     */
+    private static final boolean INCREMENTAL_RESTORE = !Boolean.getBoolean("olf.networkState.noIncrementalRestore");
+
     private final LfNetwork network;
 
     // states of buses and branches, stored in flat arrays (much better memory locality than one object per element)
@@ -56,13 +66,50 @@ public class NetworkState {
         Set<LfBus> excludedSlackBuses = network.getSynchronousNetworks().stream()
             .flatMap(lfScNetwork -> lfScNetwork.getExcludedSlackBuses().stream())
             .collect(Collectors.toSet());
-        return new NetworkState(network, busStates, branchStates, hvdcStates, excludedSlackBuses, areaStates);
+        NetworkState networkState = new NetworkState(network, busStates, branchStates, hvdcStates, excludedSlackBuses, areaStates);
+        networkState.startTracking();
+        return networkState;
+    }
+
+    private void startTracking() {
+        network.getStateChangeTracker().reset(this, network.getBuses().size(), network.getBranches().size());
     }
 
     public void restore() {
         LOGGER.trace("Restoring network state");
-        busStates.restore();
-        branchStates.restore();
+        StateChangeTracker tracker = network.getStateChangeTracker();
+        if (INCREMENTAL_RESTORE && tracker.isTracking(this)) {
+            // only buses and branches modified since last save or restore of this state
+            busStates.restore(tracker);
+            branchStates.restore(tracker);
+            if (CHECK_INCREMENTAL_RESTORE) {
+                checkIncrementalRestore();
+            }
+        } else if (busStates.isCompatible(network.getBuses()) && branchStates.isCompatible(network.getBranches())) {
+            busStates.restore();
+            branchStates.restore();
+        } else {
+            // buses or branches have been added or removed, cannot track changes anymore
+            busStates.restore();
+            branchStates.restore();
+            network.getStateChangeTracker().invalidate();
+            restoreOthers();
+            return;
+        }
+        restoreOthers();
+        startTracking();
+    }
+
+    private void checkIncrementalRestore() {
+        String busDifference = busStates.findDifference(BusesVectorState.save(network.getBuses()));
+        String branchDifference = branchStates.findDifference(BranchesVectorState.save(network.getBranches()));
+        if (busDifference != null || branchDifference != null) {
+            throw new IllegalStateException("Incremental network state restore failed: "
+                    + (busDifference != null ? busDifference : branchDifference) + " has not been restored");
+        }
+    }
+
+    private void restoreOthers() {
         ElementState.restore(hvdcStates);
         ElementState.restore(areaStates);
         // Set excluded slack buses of each synchronous network
