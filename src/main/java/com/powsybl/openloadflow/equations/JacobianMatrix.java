@@ -18,7 +18,6 @@ import com.powsybl.math.matrix.SparseMatrix;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -42,16 +41,16 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
     private LUDecomposition lu;
 
     /**
-     * Copy of the sparse matrix with row indices sorted inside each column, used for the LU decomposition. Sparse LU
-     * solvers (KLU block triangular form and fill-reducing ordering) give much better results with sorted row indices,
-     * whereas derivatives are not always emitted in row order. Null if the matrix is not sparse or already sorted.
+     * Sparse matrix (sorted, possibly with a larger structure) on which the LU decomposition is computed, see
+     * {@link JacobianLuStructure}. Null if not supported (dense matrices, fast decoupled).
      */
-    private SparseMatrix sortedMatrix;
+    private JacobianLuStructure luStructure;
 
     /**
-     * For each value index of the matrix, the index of the same element in the sorted matrix.
+     * True if the LU decomposition has to be numerically refactorized before being used (LU structure kept after a
+     * Jacobian structure change).
      */
-    private int[] sortedValueIndex;
+    private boolean luRefactorizationNeeded = false;
 
     protected enum Status {
         VALID,
@@ -169,66 +168,35 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         lu = null;
     }
 
+    /**
+     * If true the LU decomposition is computed on a sorted copy of the sparse matrix.
+     */
+    protected boolean isLuStructureSupported() {
+        return true;
+    }
+
+    /**
+     * If true, the LU structure (and so the LU symbolic analysis) is kept when the Jacobian structure shrinks.
+     */
+    protected boolean isLuStructureReuseAllowed() {
+        return equationSystem.getDiagonalVariableTypeProvider() != null;
+    }
+
     private void initMatrix() {
         initDer();
-        clearLu();
-        initSortedMatrix();
-    }
-
-    private void initSortedMatrix() {
-        sortedMatrix = null;
-        sortedValueIndex = null;
-        if (!(matrix instanceof SparseMatrix sparseMatrix)) {
-            return;
-        }
-        int[] columnStart = sparseMatrix.getColumnStart();
-        int[] rowIndices = sparseMatrix.getRowIndices();
-        int columnCount = sparseMatrix.getColumnCount();
-        int valueCount = columnStart[columnCount];
-        boolean sorted = true;
-        for (int column = 0; column < columnCount && sorted; column++) {
-            for (int i = columnStart[column] + 1; i < columnStart[column + 1]; i++) {
-                if (rowIndices[i] < rowIndices[i - 1]) {
-                    sorted = false;
-                    break;
-                }
+        if (matrix instanceof SparseMatrix sparseMatrix && isLuStructureSupported()) {
+            if (luStructure == null) {
+                luStructure = new JacobianLuStructure(matrixFactory);
             }
-        }
-        if (sorted) {
-            return;
-        }
-        Matrix newSortedMatrix = matrixFactory.create(sparseMatrix.getRowCount(), columnCount, valueCount);
-        if (!(newSortedMatrix instanceof SparseMatrix)) {
-            return;
-        }
-        double[] values = sparseMatrix.getValues();
-        sortedValueIndex = new int[valueCount];
-        long[] keys = new long[0];
-        for (int column = 0; column < columnCount; column++) {
-            int start = columnStart[column];
-            int length = columnStart[column + 1] - start;
-            if (keys.length < length) {
-                keys = new long[length];
+            boolean rebuilt = luStructure.update(sparseMatrix, equationSystem.getIndex(), isLuStructureReuseAllowed() && lu != null);
+            if (rebuilt) {
+                clearLu();
+            } else {
+                luRefactorizationNeeded = true;
             }
-            for (int k = 0; k < length; k++) {
-                keys[k] = ((long) rowIndices[start + k] << 32) | k; // sort by row then by original position
-            }
-            Arrays.sort(keys, 0, length);
-            for (int k = 0; k < length; k++) {
-                int originalIndex = start + (int) (keys[k] & 0xFFFFFFFFL);
-                sortedValueIndex[originalIndex] = newSortedMatrix.addAndGetIndex(rowIndices[originalIndex], column, values[originalIndex]);
-            }
-        }
-        sortedMatrix = (SparseMatrix) newSortedMatrix;
-    }
-
-    private void copyValuesToSortedMatrix() {
-        if (sortedMatrix != null) {
-            double[] values = ((SparseMatrix) matrix).getValues();
-            double[] sortedValues = sortedMatrix.getValues();
-            for (int i = 0; i < sortedValueIndex.length; i++) {
-                sortedValues[sortedValueIndex[i]] = values[i];
-            }
+        } else {
+            luStructure = null;
+            clearLu();
         }
     }
 
@@ -264,7 +232,10 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     private void updateValues(boolean allowIncrementalUpdate) {
         updateDer();
-        copyValuesToSortedMatrix();
+        if (luStructure != null) {
+            luStructure.copyValues((SparseMatrix) matrix);
+        }
+        luRefactorizationNeeded = false;
         try {
             updateLu(allowIncrementalUpdate);
         } catch (MatrixException ex) {
@@ -318,27 +289,74 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         if (lu == null) {
             Stopwatch stopwatch = Stopwatch.createStarted();
 
-            lu = sortedMatrix != null ? sortedMatrix.decomposeLU() : m.decomposeLU();
+            lu = luStructure != null ? luStructure.getLuMatrix().decomposeLU() : m.decomposeLU();
+            luRefactorizationNeeded = false;
 
             LOGGER.debug(PERFORMANCE_MARKER, "LU decomposition done in {} us", stopwatch.elapsed(TimeUnit.MICROSECONDS));
+        } else if (luRefactorizationNeeded) {
+            luRefactorizationNeeded = false;
+            refactorLu();
         }
         return lu;
     }
 
+    private void refactorLu() {
+        try {
+            updateLu(true);
+        } catch (MatrixException ex) {
+            LOGGER.warn("Exception when updating LU matrix in incremental mode. Retrying without incremental mode");
+            updateLu(false);
+        }
+    }
+
+    private boolean isLuSameNumbering() {
+        return luStructure == null || luStructure.isSameNumbering();
+    }
+
+    // Jacobian matrix rows are variables and columns are equations
+
     public void solve(double[] b) {
-        getLUDecomposition().solve(b);
+        LUDecomposition luDecomposition = getLUDecomposition();
+        if (isLuSameNumbering()) {
+            luDecomposition.solve(b);
+        } else {
+            double[] luB = luStructure.toLu(b, false);
+            luDecomposition.solve(luB);
+            luStructure.fromLu(luB, b, true);
+        }
     }
 
     public void solveTransposed(double[] b) {
-        getLUDecomposition().solveTransposed(b);
+        LUDecomposition luDecomposition = getLUDecomposition();
+        if (isLuSameNumbering()) {
+            luDecomposition.solveTransposed(b);
+        } else {
+            double[] luB = luStructure.toLu(b, true);
+            luDecomposition.solveTransposed(luB);
+            luStructure.fromLu(luB, b, false);
+        }
     }
 
     public void solve(DenseMatrix b) {
-        getLUDecomposition().solve(b);
+        LUDecomposition luDecomposition = getLUDecomposition();
+        if (isLuSameNumbering()) {
+            luDecomposition.solve(b);
+        } else {
+            DenseMatrix luB = luStructure.toLu(b, false);
+            luDecomposition.solve(luB);
+            luStructure.fromLu(luB, b, true);
+        }
     }
 
     public void solveTransposed(DenseMatrix b) {
-        getLUDecomposition().solveTransposed(b);
+        LUDecomposition luDecomposition = getLUDecomposition();
+        if (isLuSameNumbering()) {
+            luDecomposition.solveTransposed(b);
+        } else {
+            DenseMatrix luB = luStructure.toLu(b, true);
+            luDecomposition.solveTransposed(luB);
+            luStructure.fromLu(luB, b, false);
+        }
     }
 
     @Override
@@ -346,8 +364,7 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         equationSystem.getIndex().removeListener(this);
         equationSystem.getStateVector().removeListener(this);
         matrix = null;
-        sortedMatrix = null;
-        sortedValueIndex = null;
+        luStructure = null;
         clearLu();
     }
 }

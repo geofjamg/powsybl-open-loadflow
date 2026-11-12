@@ -195,6 +195,12 @@ public class JacobianMatrixFastDecoupled
     }
 
     @Override
+    protected boolean isLuStructureSupported() {
+        // fast decoupled matrices are built on a part of the equation system index only
+        return false;
+    }
+
+    @Override
     protected void initDer() {
         Stopwatch stopwatch = Stopwatch.createStarted();
 
