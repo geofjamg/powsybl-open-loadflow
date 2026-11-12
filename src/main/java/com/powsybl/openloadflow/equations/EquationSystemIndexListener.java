@@ -40,4 +40,12 @@ public interface EquationSystemIndexListener<V extends Enum<V> & Quantity, E ext
      * Called when the order of variables or columns has been changed even without any change in equations (can happen when using Fast Decoupled)
      */
     void onEquationIndexOrderChanged();
+
+    /**
+     * Called when equations become ghosts (deactivated but keeping their column) or ghosts are reactivated: the
+     * structure is unchanged but values of the ghost columns (identity in the Jacobian, zero in vectors) have changed.
+     */
+    default void onGhostChange() {
+        // nothing to do by default
+    }
 }

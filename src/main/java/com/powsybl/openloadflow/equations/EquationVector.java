@@ -51,10 +51,15 @@ public class EquationVector<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
         Arrays.fill(array, 0); // necessary?
         for (SingleEquation<V, E> equation : equationSystem.getIndex().getSortedSingleEquationsToSolve()) {
-            array[equation.getColumn()] = equation.evalLhs();
+            if (equation.isActive()) { // inactive equations to solve are ghosts: zero mismatch
+                array[equation.getColumn()] = equation.evalLhs();
+            }
         }
         for (EquationArray<V, E> equationArray : equationSystem.getEquationArrays()) {
             equationArray.eval(array);
+        }
+        for (int column : equationSystem.getIndex().getGhostColumns()) {
+            array[column] = 0;
         }
 
         LOGGER.debug(PERFORMANCE_MARKER, "Equation vector updated in {} us", stopwatch.elapsed(TimeUnit.MICROSECONDS));

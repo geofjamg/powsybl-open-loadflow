@@ -19,6 +19,7 @@ import com.powsybl.openloadflow.ac.AcloadFlowEngine;
 import com.powsybl.openloadflow.ac.equations.AcEquationType;
 import com.powsybl.openloadflow.ac.equations.AcVariableType;
 import com.powsybl.openloadflow.ac.outerloop.AcOuterLoop;
+import com.powsybl.openloadflow.ac.solver.NewtonRaphsonFactory;
 import com.powsybl.openloadflow.graph.GraphConnectivityFactory;
 import com.powsybl.openloadflow.lf.outerloop.OuterLoopStatus;
 import com.powsybl.openloadflow.lf.outerloop.config.AbstractAcOuterLoopConfig;
@@ -114,6 +115,19 @@ public class AcSecurityAnalysis extends AbstractSecurityAnalysis<AcVariableType,
             parameters.setSlackDistributionFailureBehavior(OpenLoadFlowParameters.SlackDistributionFailureBehavior.FAIL);
         }
         parameters.setVoltageInitReport(false); // there is no point in reporting the PreviousVoltageValue initializer
+    }
+
+    @Override
+    protected void afterPreContingencySimulation(AcLoadFlowContext context) {
+        // buses disconnected by contingencies (islands) keep their equations and variables as ghosts (identity), so
+        // that the equation system and Jacobian matrix structures are kept, which is much faster
+        AcLoadFlowParameters parameters = context.getParameters();
+        var equationSystem = context.getEquationSystem();
+        if (parameters.getSolverFactory() instanceof NewtonRaphsonFactory
+                && !parameters.isAsymmetrical()
+                && equationSystem.getDiagonalVariableTypeProvider() != null) {
+            equationSystem.getIndex().setGhostMode(true);
+        }
     }
 
     public static PostContingencyComputationStatus postContingencyStatusFromAcLoadFlowResult(AcLoadFlowResult result) {

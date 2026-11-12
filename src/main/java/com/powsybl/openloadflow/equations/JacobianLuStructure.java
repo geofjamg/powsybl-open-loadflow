@@ -88,7 +88,7 @@ final class JacobianLuStructure {
         for (EquationArray<V, E> equationArray : index.getSortedEquationArraysToSolve()) {
             int[] elementNumToColumn = equationArray.getElementNumToColumn();
             for (int elementNum = 0; elementNum < equationArray.getElementCount(); elementNum++) {
-                if (equationArray.isElementActive(elementNum)) {
+                if (equationArray.hasColumn(elementNum)) {
                     columnKeys[elementNumToColumn[elementNum]] = key(equationArray.getType(), elementNum);
                 }
             }

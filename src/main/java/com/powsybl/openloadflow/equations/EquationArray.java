@@ -56,7 +56,14 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     private final Map<Integer, int[]> additionalMatrixIndexByElementNum = new HashMap<>();
     private boolean fastDerReady = false;
 
-    // for fast evaluation: for each term array, terms of active elements as flat (term num, term element num, column)
+    // ghost mode: a deactivated element keeps its column (see EquationSystemIndex ghost mode)
+    private boolean ghostMode = false;
+    private boolean[] elementGhost;
+    private int ghostCount = 0;
+    private boolean[] elementInStructure; // elements having a column at last index build
+    private int newActiveCount = 0; // active elements without column at last index build
+
+    // for fast evaluation: for each term array, terms of elements having a column as flat (term num, term element num, column)
     private record FlatEvalTable(int[] termNums, int[] termElementNums, int[] columns) {
     }
 
@@ -73,7 +80,9 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
                 TIntArrayList termElementNums = new TIntArrayList();
                 TIntArrayList termColumns = new TIntArrayList();
                 for (int elementNum = 0; elementNum < elementCount; elementNum++) {
-                    if (elementActive[elementNum]) {
+                    // ghost elements are included (their columns are zeroed after evaluation) so that the table remains
+                    // valid when they are reactivated
+                    if (hasColumn(elementNum)) {
                         for (int i = startIndices[elementNum]; i < startIndices[elementNum + 1]; i++) {
                             int termNum = concatenatedTermNums.getQuick(i);
                             termNums.add(termNum);
@@ -164,7 +173,7 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             elementNumToColumn = new int[elementCount];
             int column = firstColumn;
             for (int elementNum = 0; elementNum < elementCount; elementNum++) {
-                if (elementActive[elementNum]) {
+                if (hasColumn(elementNum)) {
                     elementNumToColumn[elementNum] = column++;
                 } else {
                     elementNumToColumn[elementNum] = -1;
@@ -195,7 +204,12 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         elementNumToColumn = null;
         flatEvalTables = null;
         columnToElementNum = null;
-        matrixElementIndexes.reset();
+        if (!ghostMode) {
+            // in ghost mode, column changes can be transient (activation then deactivation of an element without
+            // column) and the structure kept: recorded matrix element indexes must not be lost (they are anyway
+            // overwritten when the Jacobian matrix is rebuilt)
+            matrixElementIndexes.reset();
+        }
     }
 
     public EquationSystem<V, E> getEquationSystem() {
@@ -222,15 +236,105 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     public void setElementActive(int elementNum, boolean active) {
         if (active != this.elementActive[elementNum]) {
             this.elementActive[elementNum] = active;
-            if (active) {
-                length++;
+            if (active && elementGhost != null && elementGhost[elementNum]) {
+                // a ghost element is reactivated: it already has a column
+                elementGhost[elementNum] = false;
+                ghostCount--;
+            } else if (!active && ghostMode && elementInStructure[elementNum]) {
+                // keep the column of the element as a ghost
+                elementGhost[elementNum] = true;
+                ghostCount++;
             } else {
-                length--;
+                if (active) {
+                    length++;
+                } else {
+                    length--;
+                }
+                if (ghostMode && !elementInStructure[elementNum]) {
+                    newActiveCount += active ? 1 : -1;
+                }
+                invalidateElementNumToColumn();
             }
-            invalidateElementNumToColumn();
             equationSystem.notifyEquationArrayChange(this, elementNum,
                     active ? EquationEventType.EQUATION_ACTIVATED : EquationEventType.EQUATION_DEACTIVATED);
         }
+    }
+
+    /**
+     * True if the element has a column in the equation system: active or ghost.
+     */
+    public boolean hasColumn(int elementNum) {
+        return elementActive[elementNum] || elementGhost != null && elementGhost[elementNum];
+    }
+
+    public boolean isElementGhost(int elementNum) {
+        return elementGhost != null && elementGhost[elementNum];
+    }
+
+    int getGhostCount() {
+        return ghostCount;
+    }
+
+    /**
+     * Number of active elements which had no column at last index build (structure change).
+     */
+    int getNewActiveCount() {
+        return newActiveCount;
+    }
+
+    void setGhostMode(boolean ghostMode) {
+        this.ghostMode = ghostMode;
+        if (ghostMode && elementGhost == null) {
+            elementGhost = new boolean[elementCount];
+            elementInStructure = new boolean[elementCount];
+        }
+        snapshotStructure();
+    }
+
+    /**
+     * Record elements having a column (called when the equation system index is built).
+     */
+    void snapshotStructure() {
+        if (ghostMode) {
+            for (int elementNum = 0; elementNum < elementCount; elementNum++) {
+                elementInStructure[elementNum] = hasColumn(elementNum);
+            }
+            newActiveCount = 0;
+        }
+    }
+
+    /**
+     * Convert ghost elements into really removed elements (they lose their column).
+     */
+    void removeGhosts() {
+        if (ghostCount > 0) {
+            for (int elementNum = 0; elementNum < elementCount; elementNum++) {
+                if (elementGhost[elementNum]) {
+                    elementGhost[elementNum] = false;
+                    length--;
+                }
+            }
+            ghostCount = 0;
+            invalidateElementNumToColumn();
+        }
+    }
+
+    /**
+     * Matrix value index of the derivative of the element equation with respect to the variable at the given row, as
+     * recorded during last full derivative computation, or -1 if not found.
+     */
+    int findMatrixIndex(int elementNum, int row) {
+        if (!fastDerReady || equationDerivativeVector == null) {
+            return -1;
+        }
+        int iStart = equationDerivativeVectorStartIndices[elementNum];
+        int iEnd = equationDerivativeVectorStartIndices[elementNum + 1];
+        for (int i = iStart; i < iEnd; i++) {
+            if (equationDerivativeVector.rows[i] == row) {
+                return entryMatrixIndex[i];
+            }
+        }
+        return -1;
     }
 
     public void updateElementEquation(LfElement element, boolean enable) {
@@ -493,8 +597,8 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         double[] additionalValues = new double[4];
         boolean[] additionalDone = new boolean[4];
         for (int elementNum = 0; elementNum < elementCount; elementNum++) {
-            // skip inactive elements
-            if (!elementActive[elementNum]) {
+            // skip elements without column (ghost elements keep their structure, with inactive terms)
+            if (!hasColumn(elementNum)) {
                 continue;
             }
 

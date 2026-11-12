@@ -52,6 +52,9 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
      */
     private boolean luRefactorizationNeeded = false;
 
+    // matrix value indexes of the diagonal of ghost columns (identity), null if to be computed
+    private int[] ghostIdentityIndexes;
+
     protected enum Status {
         VALID,
         VALUES_INVALID, // same structure but values have to be updated
@@ -100,6 +103,12 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     @Override
     public void onEquationTermArrayChange(EquationTermArray<V, E> equationTermArray, int termNum, ChangeType changeType) {
+        updateStatus(Status.VALUES_AND_ZEROS_INVALID);
+    }
+
+    @Override
+    public void onGhostChange() {
+        ghostIdentityIndexes = null;
         updateStatus(Status.VALUES_AND_ZEROS_INVALID);
     }
 
@@ -161,6 +170,9 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
                 eqArray = itSortedEquationArray.hasNext() ? itSortedEquationArray.next() : null;
             }
         }
+
+        ghostIdentityIndexes = null;
+        applyGhostIdentity();
 
         LOGGER.debug(PERFORMANCE_MARKER, "Jacobian matrix built in {} us", stopwatch.elapsed(TimeUnit.MICROSECONDS));
     }
@@ -227,6 +239,8 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
             }
         }
 
+        applyGhostIdentity();
+
         LOGGER.debug(PERFORMANCE_MARKER, "Jacobian matrix values updated in {} us", stopwatch.elapsed(TimeUnit.MICROSECONDS));
     }
 
@@ -264,7 +278,55 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         update();
     }
 
+    private boolean ghostIdentityFailed = false;
+
+    /**
+     * Set the diagonal of ghost columns to 1 (other values of these columns are zero as all their terms are inactive).
+     */
+    protected void applyGhostIdentity() {
+        EquationSystemIndex<V, E> index = equationSystem.getIndex();
+        if (!index.isGhostMode()) {
+            return;
+        }
+        if (ghostIdentityIndexes == null) {
+            int[] ghostColumns = index.getGhostColumns();
+            if (ghostColumns.length == 0) {
+                ghostIdentityIndexes = new int[0];
+            } else {
+                int[] indexes = new int[ghostColumns.length];
+                int k = 0;
+                for (SingleEquation<V, E> equation : index.getGhostSingleEquations()) {
+                    indexes[k++] = equation.findMatrixIndex(equation.getColumn());
+                }
+                for (EquationArray<V, E> equationArray : index.getSortedEquationArraysToSolve()) {
+                    if (equationArray.getGhostCount() > 0) {
+                        int[] elementNumToColumn = equationArray.getElementNumToColumn();
+                        for (int elementNum = 0; elementNum < equationArray.getElementCount(); elementNum++) {
+                            if (equationArray.isElementGhost(elementNum)) {
+                                int column = elementNumToColumn[elementNum];
+                                indexes[k++] = equationArray.findMatrixIndex(elementNum, column);
+                            }
+                        }
+                    }
+                }
+                for (int i : indexes) {
+                    if (i == -1) {
+                        // should not happen: no diagonal element in the structure of a ghost column
+                        ghostIdentityFailed = true;
+                        return;
+                    }
+                }
+                ghostIdentityIndexes = indexes;
+            }
+        }
+        for (int i : ghostIdentityIndexes) {
+            matrix.setAtIndex(i, 1);
+        }
+    }
+
     private void update() {
+        // resolve pending index changes first (ghosts), they may change the status
+        equationSystem.getIndex().validate();
         if (status != Status.VALID) {
             switch (status) {
                 case STRUCTURE_INVALID:
@@ -286,6 +348,12 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
                     break;
             }
             status = Status.VALID;
+            if (ghostIdentityFailed) {
+                ghostIdentityFailed = false;
+                LOGGER.warn("Jacobian matrix: diagonal of a ghost column not found, ghost mode disabled");
+                equationSystem.getIndex().setGhostMode(false); // structure change notified
+                update();
+            }
         }
     }
 

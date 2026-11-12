@@ -183,6 +183,27 @@ public class SingleEquation<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         return value;
     }
 
+    /**
+     * Matrix value index of the derivative with respect to the variable at the given row, as recorded during last
+     * derivative computation, or -1 if not found.
+     */
+    int findMatrixIndex(int row) {
+        if (matrixElementIndexes == null) {
+            return -1;
+        }
+        int variableIndex = 0;
+        for (Variable<V> variable : termsByVariable.keySet()) {
+            int variableRow = variable.getRow();
+            if (variableRow != -1) {
+                if (variableRow == row) {
+                    return matrixElementIndexes[variableIndex];
+                }
+                variableIndex++;
+            }
+        }
+        return -1;
+    }
+
     public void der(DerHandler<V> handler) {
         Objects.requireNonNull(handler);
         int variableIndex = 0;

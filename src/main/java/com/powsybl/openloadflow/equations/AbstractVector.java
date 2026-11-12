@@ -57,6 +57,11 @@ public abstract class AbstractVector<V extends Enum<V> & Quantity, E extends Enu
         public void onEquationIndexOrderChanged() {
             invalidateVector();
         }
+
+        @Override
+        public void onGhostChange() {
+            invalidateValues();
+        }
     };
 
     protected AbstractVector(EquationSystem<V, E> equationSystem) {
@@ -80,6 +85,8 @@ public abstract class AbstractVector<V extends Enum<V> & Quantity, E extends Enu
 
     @Override
     public double[] getArray() {
+        // resolve pending index changes first (ghosts), they may invalidate the vector
+        equationSystem.getIndex().validate();
         switch (status) {
             case VECTOR_INVALID:
                 array = createArray();
