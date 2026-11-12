@@ -267,8 +267,8 @@ class SecondaryVoltageControlTest {
                          + Outer loop ReactiveLimits
                             + Outer loop iteration 8
                                + 2 buses switched PV -> PQ (1 buses remain PV)
-                                  Switch bus 'VL6_0' PV -> PQ, q=24.012062 > maxQ=24
-                                  Switch bus 'VL8_0' PV -> PQ, q=200.112821 > maxQ=200
+                                  Switch bus 'VL6_0' PV -> PQ, q=24.012059 > maxQ=24
+                                  Switch bus 'VL8_0' PV -> PQ, q=200.112814 > maxQ=200
                          + Outer loop DistributedSlack
                             + Outer loop iteration 9
                                Failed to distribute slack bus active power mismatch, 3.016519 MW remains

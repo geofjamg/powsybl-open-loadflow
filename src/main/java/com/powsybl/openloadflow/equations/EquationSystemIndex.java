@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -30,7 +31,7 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
     private final Set<SingleEquation<V, E>> sortedSetEquationsToSolve = new TreeSet<>();
 
     // variable reference counting in equation terms
-    private final Map<Variable<V>, MutableInt> sortedMapVariablesToFindRefCount = new TreeMap<>();
+    private final TreeMap<Variable<V>, MutableInt> sortedMapVariablesToFindRefCount = new TreeMap<>();
 
     private List<SingleEquation<V, E>> sortedSingleEquationsToSolve = Collections.emptyList();
 
@@ -128,6 +129,10 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
             sortedSingleEquationsToSolve = Stream.concat(separatedSingleEquationsToSolve.get(true).stream(), separatedSingleEquationsToSolve.get(false).stream()).toList();
         }
         equationsIndexValid = true;
+        if (isSeparatedInFirstPart == null && equationSystem.getDiagonalVariableTypeProvider() != null) {
+            // variable rows are aligned on equation columns
+            variablesIndexValid = false;
+        }
         notifyEquationIndexOrderChange();
         LOGGER.debug("Equations index updated ({} columns including {} from array equations)",
                 columnCount, columnCountFromArrayEquations);
@@ -138,7 +143,113 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
         updateVariablesToFind(null);
     }
 
+    void invalidateVariablesIndex() {
+        variablesIndexValid = false;
+    }
+
+    /**
+     * Find the variable to find that is naturally paired with the equation (same element, type given by the
+     * equation system diagonal variable type provider), or null if there is not.
+     */
+    private Variable<V> getDiagonalVariable(Function<E, V> diagonalVariableTypeProvider, int elementNum, E equationType) {
+        V variableType = diagonalVariableTypeProvider.apply(equationType);
+        if (variableType == null) {
+            return null;
+        }
+        Variable<V> key = sortedMapVariablesToFindRefCount.ceilingKey(new Variable<>(elementNum, variableType));
+        return key != null && key.getElementNum() == elementNum && key.getType() == variableType ? key : null;
+    }
+
+    /**
+     * Number variables so that the variable naturally paired with the equation of column i is at row i. Remaining
+     * variables fill the remaining rows in the variable natural order. This gives a Jacobian matrix with a structurally
+     * non-zero diagonal and an almost symmetric pattern, much better for sparse LU fill-in than numbering equations
+     * (single equations, then equation arrays) and variables (sorted by element) independently.
+     *
+     * @return false if the numbering cannot be aligned (not a square system)
+     */
+    private boolean updateAlignedVariablesToFind(Function<E, V> diagonalVariableTypeProvider) {
+        if (!equationsIndexValid) {
+            updateEquationsToSolve();
+        }
+        int variableCount = sortedMapVariablesToFindRefCount.size();
+        if (variableCount != columnCount) {
+            return false;
+        }
+        List<Variable<V>> rowToVariable = new ArrayList<>(Collections.nCopies(variableCount, (Variable<V>) null));
+        // remember previous rows, to keep the state vector consistent with the new numbering
+        int[] previousRows = new int[variableCount];
+        int k = 0;
+        for (Variable<V> variable : sortedMapVariablesToFindRefCount.keySet()) {
+            previousRows[k++] = variable.getRow();
+            variable.setRow(-1);
+        }
+        for (SingleEquation<V, E> equation : sortedSingleEquationsToSolve) {
+            Variable<V> variable = getDiagonalVariable(diagonalVariableTypeProvider, equation.getElementNum(), equation.getType());
+            if (variable != null && variable.getRow() == -1) {
+                variable.setRow(equation.getColumn());
+                rowToVariable.set(equation.getColumn(), variable);
+            }
+        }
+        for (EquationArray<V, E> equationArray : sortedEquationArraysToSolve) {
+            int[] elementNumToColumn = equationArray.getElementNumToColumn();
+            for (int elementNum = 0; elementNum < equationArray.getElementCount(); elementNum++) {
+                if (equationArray.isElementActive(elementNum)) {
+                    int column = elementNumToColumn[elementNum];
+                    Variable<V> variable = getDiagonalVariable(diagonalVariableTypeProvider, elementNum, equationArray.getType());
+                    if (variable != null && variable.getRow() == -1) {
+                        variable.setRow(column);
+                        rowToVariable.set(column, variable);
+                    }
+                }
+            }
+        }
+        // remaining variables fill free rows
+        int freeRow = 0;
+        for (Variable<V> variable : sortedMapVariablesToFindRefCount.keySet()) {
+            if (variable.getRow() == -1) {
+                while (rowToVariable.get(freeRow) != null) {
+                    freeRow++;
+                }
+                variable.setRow(freeRow);
+                rowToVariable.set(freeRow, variable);
+            }
+        }
+        sortedVariablesToFind = Collections.unmodifiableList(rowToVariable);
+        rowCount = variableCount;
+        permuteStateVector(previousRows);
+        return true;
+    }
+
+    /**
+     * As variable rows depend on equation columns, they may change while the state vector is valid (for instance when
+     * an outer loop switches equations). Permute in place the state vector values so that terms evaluated before the
+     * next state vector initialization still read the right values. Values of variables which had no row are left
+     * unchanged (as before when the variable set changes).
+     */
+    private void permuteStateVector(int[] previousRows) {
+        double[] x = equationSystem.getStateVector().get();
+        if (x == null || x.length != previousRows.length) {
+            return;
+        }
+        double[] previousX = x.clone();
+        int k = 0;
+        for (Variable<V> variable : sortedMapVariablesToFindRefCount.keySet()) {
+            int previousRow = previousRows[k++];
+            if (previousRow >= 0 && previousRow < previousX.length) {
+                x[variable.getRow()] = previousX[previousRow];
+            }
+        }
+    }
+
     private void updateVariablesToFind(Predicate<V> isSeparatedInFirstPart) {
+        Function<E, V> diagonalVariableTypeProvider = equationSystem.getDiagonalVariableTypeProvider();
+        if (isSeparatedInFirstPart == null && diagonalVariableTypeProvider != null
+                && updateAlignedVariablesToFind(diagonalVariableTypeProvider)) {
+            variablesIndexValid = true;
+            LOGGER.debug("Variables index updated ({} rows, aligned with equations)", rowCount);
+            return;
+        }
         sortedVariablesToFind = sortedMapVariablesToFindRefCount.keySet().stream().sorted().toList();
         rowCount = 0;
         if (isSeparatedInFirstPart == null) {

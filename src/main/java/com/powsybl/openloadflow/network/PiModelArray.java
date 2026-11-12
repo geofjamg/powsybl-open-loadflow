@@ -309,7 +309,8 @@ public class PiModelArray implements PiModel {
             }
         }
 
-        if (tapPositionIndex > 0) {
+        // only look at previous tap if we have not already moved to the next one
+        if (tapPositionIndex == oldTapPositionIndex && tapPositionIndex > 0) {
             double previousA1 = models.get(tapPositionIndex - 1).getA1(); // abs?
             if (direction == Direction.INCREASE && previousA1 > currentA1
                     || direction == Direction.DECREASE && previousA1 < currentA1) {

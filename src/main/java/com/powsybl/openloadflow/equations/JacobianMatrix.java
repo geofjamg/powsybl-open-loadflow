@@ -14,9 +14,11 @@ import com.powsybl.math.matrix.LUDecomposition;
 import com.powsybl.math.matrix.Matrix;
 import com.powsybl.math.matrix.MatrixException;
 import com.powsybl.math.matrix.MatrixFactory;
+import com.powsybl.math.matrix.SparseMatrix;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -38,6 +40,18 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
     protected Matrix matrix;
 
     private LUDecomposition lu;
+
+    /**
+     * Copy of the sparse matrix with row indices sorted inside each column, used for the LU decomposition. Sparse LU
+     * solvers (KLU block triangular form and fill-reducing ordering) give much better results with sorted row indices,
+     * whereas derivatives are not always emitted in row order. Null if the matrix is not sparse or already sorted.
+     */
+    private SparseMatrix sortedMatrix;
+
+    /**
+     * For each value index of the matrix, the index of the same element in the sorted matrix.
+     */
+    private int[] sortedValueIndex;
 
     protected enum Status {
         VALID,
@@ -158,6 +172,64 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
     private void initMatrix() {
         initDer();
         clearLu();
+        initSortedMatrix();
+    }
+
+    private void initSortedMatrix() {
+        sortedMatrix = null;
+        sortedValueIndex = null;
+        if (!(matrix instanceof SparseMatrix sparseMatrix)) {
+            return;
+        }
+        int[] columnStart = sparseMatrix.getColumnStart();
+        int[] rowIndices = sparseMatrix.getRowIndices();
+        int columnCount = sparseMatrix.getColumnCount();
+        int valueCount = columnStart[columnCount];
+        boolean sorted = true;
+        for (int column = 0; column < columnCount && sorted; column++) {
+            for (int i = columnStart[column] + 1; i < columnStart[column + 1]; i++) {
+                if (rowIndices[i] < rowIndices[i - 1]) {
+                    sorted = false;
+                    break;
+                }
+            }
+        }
+        if (sorted) {
+            return;
+        }
+        Matrix newSortedMatrix = matrixFactory.create(sparseMatrix.getRowCount(), columnCount, valueCount);
+        if (!(newSortedMatrix instanceof SparseMatrix)) {
+            return;
+        }
+        double[] values = sparseMatrix.getValues();
+        sortedValueIndex = new int[valueCount];
+        long[] keys = new long[0];
+        for (int column = 0; column < columnCount; column++) {
+            int start = columnStart[column];
+            int length = columnStart[column + 1] - start;
+            if (keys.length < length) {
+                keys = new long[length];
+            }
+            for (int k = 0; k < length; k++) {
+                keys[k] = ((long) rowIndices[start + k] << 32) | k; // sort by row then by original position
+            }
+            Arrays.sort(keys, 0, length);
+            for (int k = 0; k < length; k++) {
+                int originalIndex = start + (int) (keys[k] & 0xFFFFFFFFL);
+                sortedValueIndex[originalIndex] = newSortedMatrix.addAndGetIndex(rowIndices[originalIndex], column, values[originalIndex]);
+            }
+        }
+        sortedMatrix = (SparseMatrix) newSortedMatrix;
+    }
+
+    private void copyValuesToSortedMatrix() {
+        if (sortedMatrix != null) {
+            double[] values = ((SparseMatrix) matrix).getValues();
+            double[] sortedValues = sortedMatrix.getValues();
+            for (int i = 0; i < sortedValueIndex.length; i++) {
+                sortedValues[sortedValueIndex[i]] = values[i];
+            }
+        }
     }
 
     protected void updateDer() {
@@ -192,6 +264,7 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     private void updateValues(boolean allowIncrementalUpdate) {
         updateDer();
+        copyValuesToSortedMatrix();
         try {
             updateLu(allowIncrementalUpdate);
         } catch (MatrixException ex) {
@@ -222,7 +295,10 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
                     break;
 
                 case VALUES_AND_ZEROS_INVALID:
-                    updateValues(false);
+                    // the sparsity pattern is kept (deactivated terms leave explicit zeros), so we can try an incremental
+                    // LU update (refactorization reusing the previous pivots); a full factorization is done if the pivot
+                    // growth check fails or if the refactorization fails
+                    updateValues(true);
                     break;
 
                 default:
@@ -242,7 +318,7 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         if (lu == null) {
             Stopwatch stopwatch = Stopwatch.createStarted();
 
-            lu = m.decomposeLU();
+            lu = sortedMatrix != null ? sortedMatrix.decomposeLU() : m.decomposeLU();
 
             LOGGER.debug(PERFORMANCE_MARKER, "LU decomposition done in {} us", stopwatch.elapsed(TimeUnit.MICROSECONDS));
         }
@@ -270,6 +346,8 @@ public class JacobianMatrix<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         equationSystem.getIndex().removeListener(this);
         equationSystem.getStateVector().removeListener(this);
         matrix = null;
+        sortedMatrix = null;
+        sortedValueIndex = null;
         clearLu();
     }
 }

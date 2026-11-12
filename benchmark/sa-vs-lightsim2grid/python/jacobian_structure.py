@@ -17,7 +17,7 @@ def load(path):
     ap = np.frombuffer(b[o:o + 4 * (n + 1)], '<i4'); o += 4 * (n + 1)
     ai = np.frombuffer(b[o:o + 4 * nnz], '<i4'); o += 4 * nnz
     ax = np.frombuffer(b[o:o + 8 * nnz], '<f8')
-    return sp.csc_matrix((ax, ai, ap), shape=(n, n))
+    return sp.csc_matrix((ax.copy(), ai.copy(), ap.copy()), shape=(n, n))
 
 
 def save(m, path):

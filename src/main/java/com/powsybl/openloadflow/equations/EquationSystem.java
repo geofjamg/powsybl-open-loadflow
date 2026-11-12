@@ -18,6 +18,7 @@ import java.io.StringWriter;
 import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -43,6 +44,14 @@ public class EquationSystem<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     private final EquationSystemIndex<V, E> index;
 
+    /**
+     * For each equation type, the type of the variable (of the same element) that is naturally paired with it
+     * on the diagonal of the Jacobian matrix (for instance bus active power target with bus voltage angle).
+     * When defined, variables are numbered in the same order as equations, so that the Jacobian has a structurally
+     * non-zero diagonal and an almost symmetric pattern, which is much better for sparse LU ordering and fill-in.
+     */
+    private Function<E, V> diagonalVariableTypeProvider;
+
     public EquationSystem(Class<E> equationClass, LfElementContainer elementContainer) {
         this(equationClass, elementContainer, new VariableSet<>());
     }
@@ -56,6 +65,16 @@ public class EquationSystem<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     public VariableSet<V> getVariableSet() {
         return variableSet;
+    }
+
+    public Function<E, V> getDiagonalVariableTypeProvider() {
+        return diagonalVariableTypeProvider;
+    }
+
+    public EquationSystem<V, E> setDiagonalVariableTypeProvider(Function<E, V> diagonalVariableTypeProvider) {
+        this.diagonalVariableTypeProvider = diagonalVariableTypeProvider;
+        index.invalidateVariablesIndex();
+        return this;
     }
 
     public Variable<V> getVariable(int elementNum, V type) {

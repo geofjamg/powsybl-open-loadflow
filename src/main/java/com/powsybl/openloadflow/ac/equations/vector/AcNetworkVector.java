@@ -311,7 +311,8 @@ public class AcNetworkVector extends AbstractLfNetworkListener
 
     @Override
     public void onEquationIndexOrderChanged() {
-        // nothing to do
+        // variable rows may be aligned on equation columns, so they might have changed
+        variablesInvalid = true;
     }
 
     @Override

@@ -1296,7 +1296,27 @@ public class AcEquationSystemCreator {
 
     public EquationSystem<AcVariableType, AcEquationType> create() {
         EquationSystem<AcVariableType, AcEquationType> equationSystem = new EquationSystem<>(AcEquationType.class, network);
+        equationSystem.setDiagonalVariableTypeProvider(AcEquationSystemCreator::getDiagonalVariableType);
         create(equationSystem);
         return equationSystem;
+    }
+
+    /**
+     * Variable type (of the same element) naturally paired with an equation type on the Jacobian diagonal.
+     */
+    public static AcVariableType getDiagonalVariableType(AcEquationType equationType) {
+        return switch (equationType) {
+            case BUS_TARGET_P, BUS_TARGET_PHI, BUS_DISTR_SLACK_P -> AcVariableType.BUS_PHI;
+            case BUS_TARGET_Q, BUS_TARGET_V, DISTR_Q -> AcVariableType.BUS_V;
+            case SHUNT_TARGET_B, DISTR_SHUNT_B -> AcVariableType.SHUNT_B;
+            case BRANCH_TARGET_P, BRANCH_TARGET_ALPHA1 -> AcVariableType.BRANCH_ALPHA1;
+            case BRANCH_TARGET_RHO1, DISTR_RHO -> AcVariableType.BRANCH_RHO1;
+            case DUMMY_TARGET_P -> AcVariableType.DUMMY_P;
+            case DUMMY_TARGET_Q -> AcVariableType.DUMMY_Q;
+            case DC_BUS_TARGET_I, DC_BUS_GROUND -> AcVariableType.DC_BUS_V;
+            case AC_CONV_TARGET_P_REF -> AcVariableType.CONV_P_AC;
+            case AC_CONV_TARGET_Q_REF -> AcVariableType.CONV_Q_AC;
+            default -> null;
+        };
     }
 }

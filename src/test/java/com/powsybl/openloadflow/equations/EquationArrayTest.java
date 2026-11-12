@@ -141,7 +141,7 @@ class EquationArrayTest {
 
         try (var acContext = new AcLoadFlowContext(lfNetwork, new AcLoadFlowParameters().setMatrixFactory(new SparseMatrixFactory()))) {
             acContext.getJacobianMatrix().initDer();
-            int[] expectedRowIndices = {0, 1, 6, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            int[] expectedRowIndices = {0, 1, 2, 0, 1, 6, 3, 7, 4, 0, 1, 6, 3, 7, 4, 2, 5, 0, 1, 7, 4, 2, 5, 0, 1, 6, 3, 7, 4, 0, 1, 6, 3, 7, 4, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
             int[] rowIndices = ((SparseMatrix) acContext.getJacobianMatrix().matrix).getRowIndices();
             int[] expectedColumnStarts = {0, 1, 2, 3, 9, 17, 23, 29, 37};
             int[] columnStarts = ((SparseMatrix) acContext.getJacobianMatrix().matrix).getColumnStart();
