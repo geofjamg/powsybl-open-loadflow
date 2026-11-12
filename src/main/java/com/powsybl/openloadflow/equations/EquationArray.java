@@ -445,48 +445,60 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         // calculate all derivative values
         // process column by column so equation by equation of the array
         int valueIndex = 0;
+        // derivatives of additional single terms of current element, by variable row
+        int[] additionalRows = new int[4];
+        double[] additionalValues = new double[4];
+        boolean[] additionalDone = new boolean[4];
         for (int elementNum = 0; elementNum < elementCount; elementNum++) {
-            List<Integer> computedRows = new ArrayList<>();
             // skip inactive elements
             if (!elementActive[elementNum]) {
                 continue;
             }
 
             int column = getElementNumToColumn(elementNum);
-            // for each equation of the array we already have the list of terms to derive and its variable sorted
-            // by variable row (required by solvers)
 
-            // process term by term
-            double value = 0;
-            int row = 0;
-
-            AdditionalSingleTermsByEquation additionalTerms = null;
+            // pre-compute derivatives of additional single terms (not vectorized) of this element
+            int additionalCount = 0;
             if (hasSingleEquationTerms[elementNum]) {
-                additionalTerms = singleTermsByEquationElementNum.get(elementNum);
+                AdditionalSingleTermsByEquation additionalTerms = singleTermsByEquationElementNum.get(elementNum);
+                for (var e : additionalTerms.termsByVariable.entrySet()) {
+                    Variable<V> v = e.getKey();
+                    int vRow = v.getRow();
+                    if (vRow == -1) {
+                        continue;
+                    }
+                    double d = 0;
+                    for (var term : e.getValue()) {
+                        if (term.isActive()) {
+                            d += term.der(v);
+                        }
+                    }
+                    if (additionalCount == additionalRows.length) {
+                        additionalRows = Arrays.copyOf(additionalRows, additionalCount * 2);
+                        additionalValues = Arrays.copyOf(additionalValues, additionalCount * 2);
+                        additionalDone = Arrays.copyOf(additionalDone, additionalCount * 2);
+                    }
+                    additionalRows[additionalCount] = vRow;
+                    additionalValues[additionalCount] = d;
+                    additionalDone[additionalCount] = false;
+                    additionalCount++;
+                }
             }
 
+            // for each equation of the array we already have the list of terms to derive and its variable sorted
+            // by variable (so that all derivatives of a same variable are contiguous)
+            double value = 0;
             int prevRow = -1;
             int iStart = this.equationDerivativeVectorStartIndices[elementNum];
             int iEnd = this.equationDerivativeVectorStartIndices[elementNum + 1];
             for (int i = iStart; i < iEnd; i++) {
 
                 // the derivative variable row
-                row = equationDerivativeVector.rows[i];
+                int row = equationDerivativeVector.rows[i];
 
                 // if an element at (row, column) is complete (we switch to another row), notify
                 if (prevRow != -1 && row != prevRow) {
-                    if (additionalTerms != null) {
-                        computedRows.add(prevRow);
-                        for (Variable<V> v : additionalTerms.termsByVariable.keySet()) {
-                            if (v.getRow() == prevRow) {
-                                for (var term : additionalTerms.termsByVariable.get(v)) {
-                                    if (term.isActive()) {
-                                        value += term.der(v);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    value += consumeAdditionalValue(prevRow, additionalRows, additionalValues, additionalDone, additionalCount);
                     onDer(handler, column, prevRow, value, valueIndex);
                     valueIndex++;
                     value = 0;
@@ -497,37 +509,31 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
 
             // remaining notif
             if (prevRow != -1) {
-                if (additionalTerms != null) {
-                    computedRows.add(prevRow);
-                    for (Variable<V> v : additionalTerms.termsByVariable.keySet()) {
-                        if (v.getRow() == prevRow) {
-                            for (var term : additionalTerms.termsByVariable.get(v)) {
-                                if (term.isActive()) {
-                                    value += term.der(v);
-                                }
-                            }
-                        }
-                    }
-                }
+                value += consumeAdditionalValue(prevRow, additionalRows, additionalValues, additionalDone, additionalCount);
                 onDer(handler, column, prevRow, value, valueIndex);
                 valueIndex++;
             }
 
-            if (additionalTerms != null) {
-                for (Variable<V> v : additionalTerms.termsByVariable.keySet()) {
-                    if (v.getRow() != -1 && !computedRows.contains(v.getRow())) {
-                        value = 0;
-                        for (var term : additionalTerms.termsByVariable.get(v)) {
-                            if (term.isActive()) {
-                                value += term.der(v);
-                            }
-                        }
-                        onDer(handler, column, v.getRow(), value, valueIndex);
-                        valueIndex++;
-                    }
+            // additional single terms derivatives on variables not already notified
+            for (int k = 0; k < additionalCount; k++) {
+                if (!additionalDone[k]) {
+                    onDer(handler, column, additionalRows[k], additionalValues[k], valueIndex);
+                    valueIndex++;
                 }
             }
         }
+    }
+
+    private static double consumeAdditionalValue(int row, int[] additionalRows, double[] additionalValues, boolean[] additionalDone,
+                                                 int additionalCount) {
+        double value = 0;
+        for (int k = 0; k < additionalCount; k++) {
+            if (additionalRows[k] == row) {
+                additionalDone[k] = true;
+                value += additionalValues[k];
+            }
+        }
+        return value;
     }
 
     private void onDer(DerHandler handler, int column, int row, double value, int valueIndex) {

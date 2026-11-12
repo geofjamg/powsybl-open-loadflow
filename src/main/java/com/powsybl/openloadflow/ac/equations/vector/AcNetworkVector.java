@@ -206,8 +206,9 @@ public class AcNetworkVector extends AbstractLfNetworkListener
                     // q1
                     updateQ1AndDerivatives(branchNum, v1, r1, v2, sinTheta1, cosTheta1);
 
-                    // i1
-                    branchVector.i1[branchNum] = FastMath.hypot(branchVector.p1[branchNum], branchVector.q1[branchNum]) / v1;
+                    // i1 (computed lazily)
+                    branchVector.v1State[branchNum] = v1;
+                    branchVector.i1Valid[branchNum] = false;
 
                     // p2
                     updateP2AndDerivatives(branchNum, v1, r1, v2, sinTheta2, cosTheta2);
@@ -215,8 +216,9 @@ public class AcNetworkVector extends AbstractLfNetworkListener
                     // q2
                     updateQ2AndDerivatives(branchNum, v1, r1, v2, sinTheta2, cosTheta2);
 
-                    // i2
-                    branchVector.i2[branchNum] = FastMath.hypot(branchVector.p2[branchNum], branchVector.q2[branchNum]) / v2;
+                    // i2 (computed lazily)
+                    branchVector.v2State[branchNum] = v2;
+                    branchVector.i2Valid[branchNum] = false;
                 }
             }
         }

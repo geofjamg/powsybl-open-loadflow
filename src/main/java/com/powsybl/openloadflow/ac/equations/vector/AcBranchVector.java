@@ -64,6 +64,12 @@ public class AcBranchVector {
     final double[] q2;
     final double[] i1;
     final double[] i2;
+    // currents are computed lazily (only needed for results, not by the Newton-Raphson): voltages at last update
+    // and validity of the currents
+    final double[] v1State;
+    final double[] v2State;
+    final boolean[] i1Valid;
+    final boolean[] i2Valid;
 
     final double[] dp1dv1;
     final double[] dp1dv2;
@@ -130,6 +136,13 @@ public class AcBranchVector {
         q2 = new double[size];
         i1 = new double[size];
         i2 = new double[size];
+        v1State = new double[size];
+        v2State = new double[size];
+        i1Valid = new boolean[size];
+        i2Valid = new boolean[size];
+        // as long as not computed, currents are zero
+        java.util.Arrays.fill(i1Valid, true);
+        java.util.Arrays.fill(i2Valid, true);
 
         dp1dv1 = new double[size];
         dp1dv2 = new double[size];
@@ -207,10 +220,22 @@ public class AcBranchVector {
     }
 
     public Evaluable getI1(int branchNum) {
-        return () -> i1[branchNum];
+        return () -> {
+            if (!i1Valid[branchNum]) {
+                i1[branchNum] = FastMath.hypot(p1[branchNum], q1[branchNum]) / v1State[branchNum];
+                i1Valid[branchNum] = true;
+            }
+            return i1[branchNum];
+        };
     }
 
     public Evaluable getI2(int branchNum) {
-        return () -> i2[branchNum];
+        return () -> {
+            if (!i2Valid[branchNum]) {
+                i2[branchNum] = FastMath.hypot(p2[branchNum], q2[branchNum]) / v2State[branchNum];
+                i2Valid[branchNum] = true;
+            }
+            return i2[branchNum];
+        };
     }
 }
