@@ -163,9 +163,10 @@ public class AcloadFlowEngine implements LoadFlowEngine<AcVariableType, AcEquati
         LfNetwork network = context.getNetwork();
         Map<String, Double> busesOutOfNormalVoltageRange = new LinkedHashMap<>();
         for (Variable<AcVariableType> v : equationSystem.getIndex().getSortedVariablesToFind()) {
-            if (v.getType() == AcVariableType.BUS_V && !network.getBus(v.getElementNum()).isFictitious()) {
+            if (v.getType() == AcVariableType.BUS_V) {
                 double value = equationSystem.getStateVector().get(v.getRow());
-                if (value < parameters.getMinRealisticVoltage() || value > parameters.getMaxRealisticVoltage()) {
+                if ((value < parameters.getMinRealisticVoltage() || value > parameters.getMaxRealisticVoltage())
+                        && !network.getBus(v.getElementNum()).isFictitious()) {
                     // only consider unrealistic if nominal voltage high enough
                     if (network.getBus(v.getElementNum()).getNominalV() >= minNominalVoltageRealisticVoltageCheck) {
                         busesOutOfNormalVoltageRange.put(network.getBus(v.getElementNum()).getId(), value);

@@ -143,6 +143,23 @@ public class MonitoringVoltageOuterLoop implements AcOuterLoop {
 
     @Override
     public boolean isNeeded(AcLoadFlowContext context) {
+        // fast check first: is there any monitoring static var compensator with a stand by automaton?
+        boolean hasMonitoringSvcWithAutomaton = false;
+        for (LfBus bus : context.getNetwork().getBuses()) {
+            for (LfGenerator generator : bus.getGenerators()) {
+                if (generator.getGeneratorControlType() == LfGenerator.GeneratorControlType.MONITORING_VOLTAGE
+                        && ((LfStaticVarCompensator) generator).getStandByAutomaton().isPresent()) {
+                    hasMonitoringSvcWithAutomaton = true;
+                    break;
+                }
+            }
+            if (hasMonitoringSvcWithAutomaton) {
+                break;
+            }
+        }
+        if (!hasMonitoringSvcWithAutomaton) {
+            return false;
+        }
         return context.getNetwork().<LfBus>getControllerElements(VoltageControl.Type.GENERATOR).stream()
                 .filter(LfBus::isGeneratorVoltageControlled)
                 .anyMatch(bus -> getControlledBusVoltageLimits(bus).isPresent());
