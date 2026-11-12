@@ -83,4 +83,17 @@ class EquationDerivativeVector {
             rows[i] = rowRefs[i].intValue();
         }
     }
+
+    /**
+     * Add derivative values of active terms to the matrix values, each entry going to the given matrix index.
+     */
+    void addValues(EquationArray<?, ?> equationArray, int[] entryMatrixIndex, double[] matrixValues) {
+        var termArrays = equationArray.getTermArrays();
+        for (int i = 0; i < termNums.length; i++) {
+            int matrixIndex = entryMatrixIndex[i];
+            if (matrixIndex != -1 && termArrays.get(termArrayNums[i]).isTermActive(termNums[i])) {
+                matrixValues[matrixIndex] += termDerValues[i][termElementNum[i]];
+            }
+        }
+    }
 }

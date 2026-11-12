@@ -50,6 +50,12 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     private final int[] equationDerivativeVectorStartIndices;
     private EquationDerivativeVector equationDerivativeVector;
 
+    // for fast derivative values update (same matrix structure): matrix value index of each derivative vector entry
+    // and of each additional single term variable, recorded during last full derivative computation
+    private int[] entryMatrixIndex;
+    private final Map<Integer, int[]> additionalMatrixIndexByElementNum = new HashMap<>();
+    private boolean fastDerReady = false;
+
     private final class AdditionalSingleTermsByEquation {
         private final List<SingleEquationTerm<V, E>> terms = new ArrayList<>();
         private final TreeMap<Variable<V>, List<SingleEquationTerm<V, E>>> termsByVariable = new TreeMap<>();
@@ -434,6 +440,7 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     void invalidateEquationDerivativeVectors() {
         equationDerivativeVector = null;
         matrixElementIndexes.reset();
+        fastDerReady = false;
     }
 
     public void der(DerHandler handler) {
@@ -441,6 +448,13 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
 
         updateEquationDerivativeVectors();
         equationDerivativeVector.update(this);
+
+        int entryCount = equationDerivativeVectorStartIndices[elementCount];
+        if (entryMatrixIndex == null || entryMatrixIndex.length != entryCount) {
+            entryMatrixIndex = new int[entryCount];
+        }
+        Arrays.fill(entryMatrixIndex, -1);
+        additionalMatrixIndexByElementNum.clear();
 
         // calculate all derivative values
         // process column by column so equation by equation of the array
@@ -487,8 +501,10 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
 
             // for each equation of the array we already have the list of terms to derive and its variable sorted
             // by variable (so that all derivatives of a same variable are contiguous)
+            int[] additionalMatrixIndex = additionalCount > 0 ? new int[additionalCount] : null;
             double value = 0;
             int prevRow = -1;
+            int segmentStart = -1;
             int iStart = this.equationDerivativeVectorStartIndices[elementNum];
             int iEnd = this.equationDerivativeVectorStartIndices[elementNum + 1];
             for (int i = iStart; i < iEnd; i++) {
@@ -499,9 +515,13 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
                 // if an element at (row, column) is complete (we switch to another row), notify
                 if (prevRow != -1 && row != prevRow) {
                     value += consumeAdditionalValue(prevRow, additionalRows, additionalValues, additionalDone, additionalCount);
-                    onDer(handler, column, prevRow, value, valueIndex);
+                    int matrixIndex = onDer(handler, column, prevRow, value, valueIndex);
+                    recordMatrixIndex(matrixIndex, segmentStart, i, prevRow, additionalRows, additionalMatrixIndex, additionalCount);
                     valueIndex++;
                     value = 0;
+                }
+                if (row != prevRow) {
+                    segmentStart = i;
                 }
                 prevRow = row;
                 value += equationDerivativeVector.values[i];
@@ -510,16 +530,70 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             // remaining notif
             if (prevRow != -1) {
                 value += consumeAdditionalValue(prevRow, additionalRows, additionalValues, additionalDone, additionalCount);
-                onDer(handler, column, prevRow, value, valueIndex);
+                int matrixIndex = onDer(handler, column, prevRow, value, valueIndex);
+                recordMatrixIndex(matrixIndex, segmentStart, iEnd, prevRow, additionalRows, additionalMatrixIndex, additionalCount);
                 valueIndex++;
             }
 
             // additional single terms derivatives on variables not already notified
             for (int k = 0; k < additionalCount; k++) {
                 if (!additionalDone[k]) {
-                    onDer(handler, column, additionalRows[k], additionalValues[k], valueIndex);
+                    additionalMatrixIndex[k] = onDer(handler, column, additionalRows[k], additionalValues[k], valueIndex);
                     valueIndex++;
                 }
+            }
+            if (additionalMatrixIndex != null) {
+                additionalMatrixIndexByElementNum.put(elementNum, additionalMatrixIndex);
+            }
+        }
+        fastDerReady = true;
+    }
+
+    private void recordMatrixIndex(int matrixIndex, int segmentStart, int segmentEnd, int row,
+                                   int[] additionalRows, int[] additionalMatrixIndex, int additionalCount) {
+        for (int i = segmentStart; i < segmentEnd; i++) {
+            entryMatrixIndex[i] = matrixIndex;
+        }
+        for (int k = 0; k < additionalCount; k++) {
+            if (additionalRows[k] == row) {
+                additionalMatrixIndex[k] = matrixIndex;
+            }
+        }
+    }
+
+    /**
+     * True if derivative values can be directly added to the matrix values with {@link #derValues(double[])}, i.e.
+     * a full derivative computation with {@link #der(DerHandler)} has been done with the current structure.
+     */
+    boolean isFastDerReady() {
+        return fastDerReady && equationDerivativeVector != null;
+    }
+
+    /**
+     * Add derivative values to the given matrix values array, using matrix value indexes recorded during last call to
+     * {@link #der(DerHandler)}. The matrix structure must not have changed since.
+     */
+    void derValues(double[] matrixValues) {
+        equationDerivativeVector.addValues(this, entryMatrixIndex, matrixValues);
+        for (var e : additionalMatrixIndexByElementNum.entrySet()) {
+            int elementNum = e.getKey();
+            if (!elementActive[elementNum]) {
+                continue;
+            }
+            int[] additionalMatrixIndex = e.getValue();
+            int k = 0;
+            for (var e2 : singleTermsByEquationElementNum.get(elementNum).termsByVariable.entrySet()) {
+                Variable<V> v = e2.getKey();
+                if (v.getRow() == -1) {
+                    continue;
+                }
+                double d = 0;
+                for (var term : e2.getValue()) {
+                    if (term.isActive()) {
+                        d += term.der(v);
+                    }
+                }
+                matrixValues[additionalMatrixIndex[k++]] += d;
             }
         }
     }
@@ -536,9 +610,10 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         return value;
     }
 
-    private void onDer(DerHandler handler, int column, int row, double value, int valueIndex) {
+    private int onDer(DerHandler handler, int column, int row, double value, int valueIndex) {
         int matrixElementIndex = handler.onDer(column, row, value, matrixElementIndexes.get(valueIndex));
         matrixElementIndexes.set(valueIndex, matrixElementIndex);
+        return matrixElementIndex;
     }
 
     public void write(Writer writer, boolean writeInactiveEquations) throws IOException {
