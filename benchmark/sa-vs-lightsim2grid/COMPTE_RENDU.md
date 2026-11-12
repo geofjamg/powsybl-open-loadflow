@@ -6,7 +6,80 @@ L'objectif était d'amener l'analyse de sécurité N-1 d'OpenLoadFlow (OLF) au n
 lightsim2grid (LS2G). Le diagnostic de départ est dans [RESUME.md](RESUME.md) et
 [README.md](README.md).
 
-## Résultat
+## Dernier état : comparaison mono-thread, avec une bibliothèque native améliorée
+
+Le cas testé est `case6515rte` en N-1 sur les 7422 lignes, dont 2162 créent un îlot, en NR pur
+(slack unique, sans limites réactives) et sur **1 thread**.
+
+Toutes les variantes ont été exécutées **deux fois, en alternance**, sur la même machine. Le bruit
+est de ±15 % d'un créneau à l'autre ; le tableau donne le meilleur des deux tours, puis le premier.
+
+| Variante | Temps | Par contingence | Résultats |
+|---|---|---|---|
+| OLF d'origine (`16838da`) + powsybl-math-native 1.5.0 officiel | 317,3 s (318,1) | 42,8 ms | référence |
+| OLF branche + powsybl-math-native 1.5.0 officiel | 78,4 s (91,4) | 10,6 ms | identiques ¹ |
+| **OLF branche + powsybl-math-native amélioré** (`-Drgrowth=-1e-12`) | **67,8 s** (78,5) | **9,1 ms** | identiques ¹ |
+| lightsim2grid 1.3.0, sans violations | 43,4 s (48,7) | 5,8 ms | |
+| lightsim2grid 1.3.0, avec violations (2,8 M, non filtrées) | 46,6 s (47,3) | 6,3 ms | |
+
+¹ Mêmes statuts (7420 convergées, 2 en limite d'itérations) et mêmes 1 021 140 violations.
+
+- Le gain total est **×4,7** par rapport à l'origine.
+- **L'écart avec lightsim2grid passe de ×6,8 à ×1,45** à travail comparable (violations comprises).
+- **La parité n'est pas atteinte** : l'écart restant est entièrement côté Java (voir plus bas).
+
+### Bibliothèque native améliorée (powsybl-math-native)
+
+Le patch est dans `math-native/powsybl-math-native-v1.5.0-perf.patch`, avec un script de
+construction `math-native/build.sh`. Le script est reproductible : il produit une bibliothèque
+binairement identique à celle qui a été mesurée. Il suffit de placer le répertoire produit en tête
+du classpath.
+
+1. **Accès sans copie aux tableaux Java.** Les tableaux de la matrice (`ap`, `ai`, `ax`) passent par
+   `GetPrimitiveArrayCritical`, libérés avec `JNI_ABORT` puisqu'ils sont en lecture seule, et le
+   second membre de `solve` passe aussi en accès critique. Auparavant, `Get/Release*ArrayElements`
+   en mode 0 copiait chaque tableau à l'entrée puis à la sortie. Ce changement ne modifie pas le
+   comportement.
+2. **Contrôle de stabilité bon marché, en option.** Un seuil `rgrowthThreshold` **négatif**, jusqu'ici
+   sans signification, active `klu_refactor` suivi d'un contrôle par `klu_rcond`, en O(n) sur la
+   diagonale de U, au lieu de `klu_rgrowth`, en O(nnz). Le seuil `|seuil|` est le rcond minimal ;
+   si la refactorisation échoue ou si ce minimum n'est pas atteint, on repasse par `klu_factor`. Les
+   seuils positifs ou nuls gardent exactement le comportement actuel.
+
+   Côté OLF, le mode s'active en fournissant `new SparseMatrixFactory(-1e-12)`, sans modification de
+   l'API Java de powsybl-math. Je ne l'ai **pas activé par défaut** : avec la bibliothèque officielle,
+   un seuil négatif provoquerait un `klu_factor` à chaque mise à jour.
+3. **Compilateur.** La bibliothèque doit être compilée avec **GCC 14**, comme l'officielle. Avec
+   GCC 13, `klu_rgrowth` est 2,5 fois plus lent et `klu_refactor` 10 % plus lent, sur des sources
+   identiques.
+
+**Validation.**
+
+- Les **1488 tests OLF passent avec la bibliothèque améliorée**, en mode par défaut (seuil positif).
+- Ils passent aussi lorsque **toutes** les `SparseMatrixFactory` d'OLF sont forcées en mode `rcond`.
+- Sur la jacobienne de ce cas, une refactorisation coûte 1,58 ms dans OLF en mode `rcond`, contre
+  2,06 ms avec la bibliothèque officielle. En banc C, `klu_refactor` seul coûte 1,4 ms.
+
+### D'où vient l'écart restant (≈ 9,1 contre ≈ 6,3 ms par contingence)
+
+- **KLU.** Il coûte maintenant ≈ 2,4 ms par contingence dans OLF (1,31 refactorisation, plus les
+  résolutions). Lightsim2grid en fait ≈ 2 par contingence, pour ≈ 2,8 ms : **KLU n'est plus en
+  cause**.
+- **Java.** Il représente ≈ 6,7 ms par contingence, contre ≈ 3,5 ms pour l'équivalent C++ de
+  lightsim2grid :
+  - restauration de l'état réseau ≈ 1,5 ms ;
+  - remplissage de la jacobienne ≈ 1,2 ms ;
+  - initialisation de l'état et des transits ≈ 1,0 ms ;
+  - mismatch ≈ 1,3 ms ;
+  - mise à jour des transits ≈ 0,8 ms ;
+  - violations ≈ 0,9 ms.
+
+  En place, ces opérations coûtent 2 à 5 fois leur coût en micro-benchmark (défauts de cache sur
+  des structures objet volumineuses). Combler cet écart demanderait de passer à des structures de
+  données plates (tableaux) pour l'état réseau et sa restauration, et à un calcul matriciel des
+  transits sur Ybus : c'est une refonte, pas une optimisation locale.
+
+## Résultats de l'étape précédente (bibliothèque native officielle)
 
 Le cas testé est `case6515rte` en N-1 sur les 7422 lignes, dont 2162 créent un îlot, sur 4 vCPU.
 OLF d'origine (commit `16838da`) et OLF branche ont été **exécutés en alternance (A/B)**, sur la
@@ -140,6 +213,14 @@ Deux attendus figés ont été mis à jour :
 
 ## Reproduire
 
+Bibliothèque native améliorée :
+
+```bash
+benchmark/sa-vs-lightsim2grid/math-native/build.sh /tmp/math-native
+```
+
+Puis lancer le benchmark avec `-cp /tmp/math-native:<classpath> -Drgrowth=-1e-12`.
+
 Le protocole et les scripts sont décrits dans le [README](README.md).
 
 ```bash
@@ -171,3 +252,4 @@ Configurations :
 | `b168839` | Suppression des `TreeMap` des chemins chauds, restauration des charges versionnée |
 | `e9d03e8` | Mise à jour partielle du vecteur des cibles |
 | `c14ffe2` | `isNeeded` et contrôle d'état réaliste moins chers |
+| `839ae4a` | Restauration moins chère (bus slack exclus, boucle unique sur les générateurs) |

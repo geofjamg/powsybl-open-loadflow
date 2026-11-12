@@ -5,6 +5,16 @@ import java.util.concurrent.atomic.AtomicLong;
 /** SparseMatrixFactory decorator counting/timing every KLU call made through LUDecomposition. */
 public class CountingMatrixFactory implements MatrixFactory {
 
+    private final double rgrowthThreshold;
+
+    public CountingMatrixFactory() {
+        this(Double.NaN);
+    }
+
+    public CountingMatrixFactory(double rgrowthThreshold) {
+        this.rgrowthThreshold = rgrowthThreshold;
+    }
+
     public static final AtomicLong CREATE = new AtomicLong();
     public static final AtomicLong INIT = new AtomicLong();
     public static final AtomicLong INIT_NS = new AtomicLong();
@@ -91,6 +101,10 @@ public class CountingMatrixFactory implements MatrixFactory {
     @Override
     public Matrix create(int rowCount, int columnCount, int estimatedValueCount) {
         CREATE.incrementAndGet();
-        return new CountingSparseMatrix(rowCount, columnCount, estimatedValueCount);
+        CountingSparseMatrix m = new CountingSparseMatrix(rowCount, columnCount, estimatedValueCount);
+        if (!Double.isNaN(rgrowthThreshold)) {
+            m.setRgrowthThreshold(rgrowthThreshold);
+        }
+        return m;
     }
 }

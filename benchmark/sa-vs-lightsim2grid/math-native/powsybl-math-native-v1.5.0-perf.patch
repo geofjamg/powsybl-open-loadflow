@@ -1,0 +1,153 @@
+diff --git a/src/main/cpp/lu.cpp b/src/main/cpp/lu.cpp
+index ae33ed5..425d8a7 100644
+--- a/src/main/cpp/lu.cpp
++++ b/src/main/cpp/lu.cpp
+@@ -68,6 +68,45 @@ std::string LUContext::error() const {
+     }
+ }
+ 
++
++namespace {
++
++/**
++ * Direct (critical) access to a Java primitive array, without copy when the JVM allows it. No JNI call nor blocking
++ * call must be done while the array is accessed. Read only arrays are released without copy back (JNI_ABORT).
++ */
++template<typename T>
++class CriticalArray {
++public:
++    CriticalArray(JNIEnv* env, jarray array, bool readOnly)
++        : _env(env), _array(array), _readOnly(readOnly), _length(env->GetArrayLength(array)),
++          _ptr(static_cast<T*>(env->GetPrimitiveArrayCritical(array, nullptr))) {
++        if (!_ptr) {
++            throw std::runtime_error("GetPrimitiveArrayCritical error");
++        }
++    }
++
++    CriticalArray(const CriticalArray&) = delete;
++    CriticalArray& operator=(const CriticalArray&) = delete;
++
++    ~CriticalArray() {
++        _env->ReleasePrimitiveArrayCritical(_array, _ptr, _readOnly ? JNI_ABORT : 0);
++    }
++
++    T* get() const { return _ptr; }
++
++    jsize length() const { return _length; }
++
++private:
++    JNIEnv* _env;
++    jarray _array;
++    bool _readOnly;
++    jsize _length;
++    T* _ptr;
++};
++
++}
++
+ class LUContextManager {
+ public:
+     LUContextManager() = default;
+@@ -161,32 +200,47 @@ JNIEXPORT jdouble JNICALL Java_com_powsybl_math_matrix_SparseLUDecomposition_upd
+                                                                                     jdouble rgrowthThreshold) {
+     try {
+         std::string id = powsybl::jni::StringUTF(env, j_id).toStr();
+-        powsybl::jni::IntArray ap(env, j_ap);
+-        powsybl::jni::IntArray ai(env, j_ai);
+-        powsybl::jni::DoubleArray ax(env, j_ax);
+-
+         LUContext& context = MANAGER->findContext(id);
+-        if (rgrowthThreshold > 0) {
+-            int ok = klu_refactor(ap.get(), ai.get(), ax.get(), context.symbolic, context.numeric, &context.common);
+-            if (ok == 0) {
+-                throw std::runtime_error("klu_refactor error " + context.error());
++
++        // matrix arrays are only read: direct access without copy (and no copy back)
++        std::string error;
++        {
++            CriticalArray<int> ap(env, j_ap, true);
++            CriticalArray<int> ai(env, j_ai, true);
++            CriticalArray<double> ax(env, j_ax, true);
++
++            bool fullFactorization = rgrowthThreshold == 0;
++            if (rgrowthThreshold > 0) {
++                // numerical refactorization + pivot growth check (O(nnz))
++                if (klu_refactor(ap.get(), ai.get(), ax.get(), context.symbolic, context.numeric, &context.common) == 0) {
++                    error = "klu_refactor error " + context.error();
++                } else if (klu_rgrowth(ap.get(), ai.get(), ax.get(), context.symbolic, context.numeric, &context.common) == 0) {
++                    error = "klu_rgrowth error " + context.error();
++                } else {
++                    // if rgrowth is too small we have to do a whole factorization
++                    fullFactorization = context.common.rgrowth < rgrowthThreshold;
++                }
++            } else if (rgrowthThreshold < 0) {
++                // numerical refactorization + cheap reciprocal condition number estimate check (O(n)), with a fall back
++                // to a whole factorization (with partial pivoting) if the refactorization fails or is not accurate
++                if (klu_refactor(ap.get(), ai.get(), ax.get(), context.symbolic, context.numeric, &context.common) == 0
++                    || klu_rcond(context.symbolic, context.numeric, &context.common) == 0
++                    || context.common.rcond < -rgrowthThreshold) {
++                    fullFactorization = true;
++                }
+             }
+-            ok = klu_rgrowth(ap.get(), ai.get(), ax.get(), context.symbolic, context.numeric, &context.common);
+-            if (ok == 0) {
+-                throw std::runtime_error("klu_rgrowth error " + context.error());
++            if (error.empty() && fullFactorization) {
++                klu_free_numeric(&context.numeric, &context.common);
++                context.numeric = klu_factor(ap.get(), ai.get(), ax.get(), context.symbolic, &context.common);
++                if (!context.numeric) {
++                    error = "klu_factor error " + context.error();
++                }
+             }
+         }
+-        // if rgrowth is too small we have to do a whole factorization
+-        if (rgrowthThreshold <= 0 || context.common.rgrowth < rgrowthThreshold) {
+-            if (klu_free_numeric(&context.numeric, &context.common) == 0) {
+-                throw std::runtime_error("klu_free_numeric error " + context.error());
+-            }
+-            context.numeric = klu_factor(ap.get(), ai.get(), ax.get(), context.symbolic, &context.common);
+-            if (!context.numeric) {
+-                throw std::runtime_error("klu_factor error " + context.error());
+-            }
++        if (!error.empty()) {
++            throw std::runtime_error(error);
+         }
+-        return context.common.rgrowth;
++        return rgrowthThreshold < 0 ? context.common.rcond : context.common.rgrowth;
+     } catch (const std::exception& e) {
+         powsybl::jni::throwMatrixException(env, e.what());
+     } catch (...) {
+@@ -229,19 +283,24 @@ JNIEXPORT void JNICALL Java_com_powsybl_math_matrix_SparseLUDecomposition_releas
+ JNIEXPORT void JNICALL Java_com_powsybl_math_matrix_SparseLUDecomposition_solve(JNIEnv * env, jobject, jstring j_id, jdoubleArray j_b, jboolean transpose) {
+     try {
+         std::string id = powsybl::jni::StringUTF(env, j_id).toStr();
+-        powsybl::jni::DoubleArray b(env, j_b);
+-
+         LUContext& context = MANAGER->findContext(id);
+ 
+-        if (transpose) {
+-            if (klu_tsolve(context.symbolic, context.numeric, b.length(), 1, b.get(), &context.common) == 0) {
+-                throw std::runtime_error("klu_tsolve error " + context.error());
+-            }
+-        } else {
+-            if (klu_solve(context.symbolic, context.numeric, b.length(), 1, b.get(), &context.common) == 0) {
+-                throw std::runtime_error("klu_solve error " + context.error());
++        std::string error;
++        {
++            CriticalArray<double> b(env, j_b, false);
++            if (transpose) {
++                if (klu_tsolve(context.symbolic, context.numeric, b.length(), 1, b.get(), &context.common) == 0) {
++                    error = "klu_tsolve error " + context.error();
++                }
++            } else {
++                if (klu_solve(context.symbolic, context.numeric, b.length(), 1, b.get(), &context.common) == 0) {
++                    error = "klu_solve error " + context.error();
++                }
+             }
+         }
++        if (!error.empty()) {
++            throw std::runtime_error(error);
++        }
+     } catch (const std::exception& e) {
+         powsybl::jni::throwMatrixException(env, e.what());
+     } catch (...) {

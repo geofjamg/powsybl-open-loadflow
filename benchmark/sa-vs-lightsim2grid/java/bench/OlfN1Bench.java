@@ -40,7 +40,7 @@ public final class OlfN1Bench {
         }
     }
 
-    static LoadFlowParameters lfParams(String cfg) {
+    public static LoadFlowParameters lfParams(String cfg) {
         setVectorized(!cfg.contains("novec"));
         LoadFlowParameters p = new LoadFlowParameters()
                 .setVoltageInitMode(LoadFlowParameters.VoltageInitMode.DC_VALUES);
@@ -112,7 +112,10 @@ public final class OlfN1Bench {
                 long t = System.nanoTime();
                 boolean counting = cfg.contains("count");
                 if (counting) { com.powsybl.math.matrix.CountingMatrixFactory.reset(); }
-                SecurityAnalysisResult res = (counting ? new OpenSecurityAnalysisProvider(new com.powsybl.math.matrix.CountingMatrixFactory(), new com.powsybl.openloadflow.graph.EvenShiloachGraphDecrementalConnectivityFactory<>()) : new OpenSecurityAnalysisProvider()).run(network, network.getVariantManager().getWorkingVariantId(),
+                String rgrowth = System.getProperty("rgrowth");
+                com.powsybl.math.matrix.MatrixFactory matrixFactory = counting ? new com.powsybl.math.matrix.CountingMatrixFactory(rgrowth != null ? Double.parseDouble(rgrowth) : Double.NaN)
+                        : rgrowth != null ? new com.powsybl.math.matrix.SparseMatrixFactory(Double.parseDouble(rgrowth)) : new com.powsybl.math.matrix.SparseMatrixFactory();
+                SecurityAnalysisResult res = new OpenSecurityAnalysisProvider(matrixFactory, new com.powsybl.openloadflow.graph.EvenShiloachGraphDecrementalConnectivityFactory<>()).run(network, network.getVariantManager().getWorkingVariantId(),
                         provider, runParameters).join().getResult();
                 double dt = (System.nanoTime() - t) / 1e9;
                 Map<String, Long> status = res.getPostContingencyResults().stream()
