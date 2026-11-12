@@ -77,10 +77,18 @@ public class LimitViolationManager {
         Objects.requireNonNull(network);
 
         // Detect violation limits on branches
-        network.getBranches().stream().filter(b -> !isBranchDisabled.test(b)).forEach(this::detectBranchViolations);
+        for (MonitoredBranchSide monitoredSide : getMonitoredBranchSides(network)) {
+            if (!isBranchDisabled.test(monitoredSide.branch)) {
+                detectBranchSideViolations(monitoredSide);
+            }
+        }
 
         // Detect violation limits on buses
-        network.getBuses().stream().filter(b -> !b.isDisabled()).forEach(this::detectBusViolations);
+        for (LfBus bus : network.getBuses()) {
+            if (!bus.isDisabled()) {
+                detectBusViolations(bus);
+            }
+        }
 
         // Detect voltage angle limits
         network.getVoltageAngleLimits().stream()
@@ -154,41 +162,89 @@ public class LimitViolationManager {
         }
     }
 
-    private void detectBranchSideViolations(LfBranch branch, LfBus bus,
-                                            TriFunction<LfBranch, LimitType, LimitReductionManager, List<LfBranch.LfLimitsGroup>> limitsGetter,
-                                            Function<LfBranch, Evaluable> iGetter,
-                                            Function<LfBranch, Evaluable> pGetter,
-                                            ToDoubleFunction<LfBranch> sGetter,
-                                            TwoSides side) {
-        List<LfBranch.LfLimitsGroup> limitsGroups = limitsGetter.apply(branch, LimitType.CURRENT, limitReductionManager);
-        for (LfBranch.LfLimitsGroup limitsGroup : limitsGroups) {
-            detectBranchCurrentViolations(branch, bus, iGetter, limitsGroup, side);
-        }
+    /**
+     * A branch side with at least one limit, with its limit groups and the smallest reduced limit value of each
+     * limit type: a violation can only exist if the value is above it, so that the detailed detection is only run in
+     * that case.
+     */
+    private record MonitoredBranchSide(LfBranch branch, LfBus bus, TwoSides side,
+                                       List<LfBranch.LfLimitsGroup> currentLimitsGroups, double minCurrentLimit,
+                                       List<LfBranch.LfLimitsGroup> activePowerLimitsGroups, double minActivePowerLimit,
+                                       List<LfBranch.LfLimitsGroup> apparentPowerLimitsGroups, double minApparentPowerLimit) {
+    }
 
-        limitsGroups = limitsGetter.apply(branch, LimitType.ACTIVE_POWER, limitReductionManager);
-        for (LfBranch.LfLimitsGroup limitsGroup : limitsGroups) {
-            detectBranchActivePowerViolations(branch, pGetter, limitsGroup, side);
-        }
+    private record MonitoredBranchSides(LfNetwork network, List<MonitoredBranchSide> sides) {
+    }
 
-        limitsGroups = limitsGetter.apply(branch, LimitType.APPARENT_POWER, limitReductionManager);
+    // cache of the monitored branch sides, shared with managers using this one as reference
+    private MonitoredBranchSides monitoredBranchSides;
+
+    private static double minReducedValue(List<LfBranch.LfLimitsGroup> limitsGroups) {
+        double min = Double.POSITIVE_INFINITY;
         for (LfBranch.LfLimitsGroup limitsGroup : limitsGroups) {
-            detectBranchApparentPowerViolations(branch, sGetter, limitsGroup, side);
+            for (LfBranch.LfLimit limit : limitsGroup.getSortedLimits()) {
+                min = Math.min(min, limit.getReducedValue());
+            }
+        }
+        return min;
+    }
+
+    private void addMonitoredBranchSide(List<MonitoredBranchSide> sides, LfBranch branch, LfBus bus, TwoSides side,
+                                        TriFunction<LfBranch, LimitType, LimitReductionManager, List<LfBranch.LfLimitsGroup>> limitsGetter) {
+        List<LfBranch.LfLimitsGroup> current = limitsGetter.apply(branch, LimitType.CURRENT, limitReductionManager);
+        List<LfBranch.LfLimitsGroup> activePower = limitsGetter.apply(branch, LimitType.ACTIVE_POWER, limitReductionManager);
+        List<LfBranch.LfLimitsGroup> apparentPower = limitsGetter.apply(branch, LimitType.APPARENT_POWER, limitReductionManager);
+        if (!current.isEmpty() || !activePower.isEmpty() || !apparentPower.isEmpty()) {
+            sides.add(new MonitoredBranchSide(branch, bus, side, current, minReducedValue(current),
+                    activePower, minReducedValue(activePower), apparentPower, minReducedValue(apparentPower)));
         }
     }
 
-    /**
-     * Detect violation limits on one branch and add them to the given list
-     * @param branch branch of interest
-     */
-    private void detectBranchViolations(LfBranch branch) {
-        // detect violation limits on a branch
-        // Only detect the most serious one (findFirst) : limit violations are ordered by severity
-        if (branch.getBus1() != null) {
-            detectBranchSideViolations(branch, branch.getBus1(), LfBranch::getLimits1, LfBranch::getI1, LfBranch::getP1, LfBranch::computeApparentPower1, TwoSides.ONE);
+    private List<MonitoredBranchSide> getMonitoredBranchSides(LfNetwork network) {
+        LimitViolationManager owner = reference != null ? reference : this;
+        MonitoredBranchSides cache = owner.monitoredBranchSides;
+        if (cache == null || cache.network() != network) {
+            List<MonitoredBranchSide> sides = new ArrayList<>();
+            for (LfBranch branch : network.getBranches()) {
+                if (branch.getBus1() != null) {
+                    addMonitoredBranchSide(sides, branch, branch.getBus1(), TwoSides.ONE, LfBranch::getLimits1);
+                }
+                if (branch.getBus2() != null) {
+                    addMonitoredBranchSide(sides, branch, branch.getBus2(), TwoSides.TWO, LfBranch::getLimits2);
+                }
+            }
+            cache = new MonitoredBranchSides(network, sides);
+            owner.monitoredBranchSides = cache;
         }
+        return cache.sides();
+    }
 
-        if (branch.getBus2() != null) {
-            detectBranchSideViolations(branch, branch.getBus2(), LfBranch::getLimits2, LfBranch::getI2, LfBranch::getP2, LfBranch::computeApparentPower2, TwoSides.TWO);
+    private void detectBranchSideViolations(MonitoredBranchSide m) {
+        LfBranch branch = m.branch();
+        boolean side1 = m.side() == TwoSides.ONE;
+        if (!m.currentLimitsGroups().isEmpty()) {
+            double i = side1 ? branch.getI1().eval() : branch.getI2().eval();
+            if (i > m.minCurrentLimit()) {
+                for (LfBranch.LfLimitsGroup limitsGroup : m.currentLimitsGroups()) {
+                    detectBranchCurrentViolations(branch, m.bus(), side1 ? LfBranch::getI1 : LfBranch::getI2, limitsGroup, m.side());
+                }
+            }
+        }
+        if (!m.activePowerLimitsGroups().isEmpty()) {
+            double p = side1 ? branch.getP1().eval() : branch.getP2().eval();
+            if (Math.abs(p) > m.minActivePowerLimit()) {
+                for (LfBranch.LfLimitsGroup limitsGroup : m.activePowerLimitsGroups()) {
+                    detectBranchActivePowerViolations(branch, side1 ? LfBranch::getP1 : LfBranch::getP2, limitsGroup, m.side());
+                }
+            }
+        }
+        if (!m.apparentPowerLimitsGroups().isEmpty()) {
+            double s = side1 ? branch.computeApparentPower1() : branch.computeApparentPower2();
+            if (s > m.minApparentPowerLimit()) {
+                for (LfBranch.LfLimitsGroup limitsGroup : m.apparentPowerLimitsGroups()) {
+                    detectBranchApparentPowerViolations(branch, side1 ? LfBranch::computeApparentPower1 : LfBranch::computeApparentPower2, limitsGroup, m.side());
+                }
+            }
         }
     }
 
