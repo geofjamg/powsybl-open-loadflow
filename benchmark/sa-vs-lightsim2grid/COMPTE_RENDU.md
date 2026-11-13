@@ -371,6 +371,23 @@ Tests : 1489, 0 échec. Résultats identiques en NR pur et en configuration par 
 | `322440b` | **Données de branche entrelacées.** Les paramètres constants et les numéros de lignes des variables de chaque branche sont aussi stockés dans deux tableaux entrelacés (un bloc contigu par branche), tenus à jour avec les tableaux séparés, qui restent la référence. La boucle de calcul des transits lit deux flux mémoire au lieu d'une vingtaine. | ≈ −10 % sur le calcul des transits (645 → 580 µs par appel, chronométré), ≈ −1 s au total |
 | — | **Jacobienne émise dans l'ordre de la matrice LU : abandonné.** Construire la jacobienne avec les lignes triées dans chaque colonne (deux passes dans `initDer`) permet une copie en bloc vers la LU, avec des résultats identiques. Mais les dérivées sont alors écrites de façon dispersée dans la jacobienne, au lieu de l'être dans l'ordre de stockage puis dispersées vers la LU : la dispersion change seulement de place. Mesuré légèrement plus lent, annulé. | — |
 
+### Options de compilation de KLU : pas de gain
+
+La bibliothèque native améliorée est compilée en `-O3` (mode Release, comme l'officielle). Variantes testées
+avec GCC 14, résultats identiques garantis par `-ffp-contract=off` (pas de fusion multiplication-addition) :
+`-march=native` (Sapphire Rapids, AVX-512), puis en plus `-fno-semantic-interposition -fno-plt`. Banc C sur
+la jacobienne exportée, 12 tours alternés :
+
+| Variante | Refactorisation, min / médiane | Résolution, min / médiane |
+|---|---|---|
+| Référence (`-O3`) | 1 115 / 1 476 µs | 209 / 271 µs |
+| `-march=native -ffp-contract=off` | 1 149 / 2 138 µs | 214 / 304 µs |
+| idem + `-fno-semantic-interposition -fno-plt` | 1 357 / 1 535 µs | 204 / 287 µs |
+
+Aucun gain : la refactorisation creuse de KLU est limitée par les accès mémoire, pas par le jeu
+d'instructions. La compilation de référence reste celle du script `math-native/build.sh` (elle redonne une
+bibliothèque binairement identique).
+
 ## Reproduire
 
 Bibliothèque native améliorée :
