@@ -21,9 +21,10 @@ parenthèses.
 | OLF branche + powsybl-math-native 1.5.0 officiel | 78,4 s (91,4) | 10,6 ms | identiques ¹ |
 | OLF branche + powsybl-math-native amélioré (`-Drgrowth=-1e-12`) | 67,8 s (78,5) | 9,1 ms | identiques ¹ |
 | idem + restauration d'état incrémentale (`42d48c3`) ² | 64,5 s (69,1) | 8,7 ms | identiques ¹ |
-| **idem + optimisations Java de la dernière série** (`6cf6827`) ³ | **49,6 s** (50,1) | **6,7 ms** | identiques ¹ |
-| lightsim2grid 1.3.0, sans violations | 42,8 s (43,4 s lors d'un créneau précédent) | 5,8 ms | |
-| lightsim2grid 1.3.0, avec violations (2,8 M, non filtrées) | 43,4 s (46,6 s lors d'un créneau précédent) | 5,8 ms | |
+| idem + optimisations Java sans toucher à `EquationArray` (`6cf6827`) ³ | 49,6 s (50,1) | 6,7 ms | identiques ¹ |
+| **idem + pistes 1 à 5** (`7258e33`) ⁴ | **47,0 s** (47,8) | **6,3 ms** | identiques ¹ |
+| lightsim2grid 1.3.0, sans violations | 42,8 à 46,8 s selon le créneau | 5,8 à 6,3 ms | |
+| lightsim2grid 1.3.0, avec violations (2,8 M, non filtrées) | 43,4 à 49,3 s selon le créneau | 5,8 à 6,6 ms | |
 
 ¹ Mêmes statuts (7420 convergées, 2 en limite d'itérations) et mêmes 1 021 140 violations.
 ² Mesuré dans un créneau ultérieur, en A/B sur 3 tours contre la version précédente (75,2 → 66,6 s
@@ -32,13 +33,17 @@ en moyenne, soit −11 %) ; voir la section « Restauration d'état incrémental
 63,9 / 68,2 / 69,4 s contre 50,1 / 49,6 / 52,0 s, soit **−25 %** en moyenne (67,2 → 50,6 s).
 lightsim2grid a été relancé juste après, dans le même créneau. Voir la section « Dernière série :
 optimisations Java sans toucher à `EquationArray` ».
+⁴ A/B sur 3 tours, en alternance avec `6cf6827`, dans un créneau plus lent : 56,0 / 61,9 / 55,0 s contre
+47,8 / 49,4 / 47,0 s, soit **−17 %** en moyenne (57,6 → 48,0 s). lightsim2grid, relancé juste après dans le
+même créneau : 46,8 s sans violations, 49,3 s avec. Voir la section « Pistes 1 à 5 ».
 
-- Le gain total est **×6,4** par rapport à l'origine (317,3 → 49,6 s).
-- **L'écart avec lightsim2grid passe de ×6,8 à ×1,15** à travail comparable (violations comprises,
-  49,6 contre 43,4 s dans le même créneau).
-- **La parité n'est pas tout à fait atteinte** : il reste ≈ 0,9 ms par contingence, côté Java.
-- En configuration par défaut (boucles externes), OLF passe de 297 à **272,7 s**, contre 259,4 s
-  pour lightsim2grid `NROuter_KLU` (mêmes 1 062 061 violations qu'avant).
+- Le gain total est **×6,7** par rapport à l'origine (317,3 → 47,0 s ; mesures de créneaux différents).
+- **Dans le même créneau, OLF est au niveau de lightsim2grid** : 48,0 s en moyenne (47,0 à 49,4 s),
+  contre 46,8 s sans violations et 49,3 s avec violations pour lightsim2grid. L'écart restant est dans
+  le bruit de la machine (±10 %).
+- En configuration par défaut (boucles externes), A/B dans un créneau lent : 345,8 → 325,6 s, mêmes
+  1 062 061 violations. Dans un créneau précédent, OLF était à 272,7 s contre 259,4 s pour
+  lightsim2grid `NROuter_KLU`.
 
 ### Bibliothèque native améliorée (powsybl-math-native)
 
@@ -344,6 +349,21 @@ Essais abandonnés :
 Tests : 1489, 0 échec. Résultats identiques en NR pur (1 021 140 violations) et en configuration
 par défaut (1 062 061 violations).
 
+## Pistes 1 à 5 : derniers postes Java
+
+Mesures en place par étape (chronométrage) et JFR précis, avant la série : KLU ≈ 15 s, transits ≈ 10,5 s
+(dont 42 % juste après l'initialisation de l'état), violations ≈ 5,7 s, jacobienne ≈ 5,6 s, initialisation
+et recopie de l'état ≈ 3,8 s, petits contrôles ≈ 1,8 s.
+
+| Commit | Piste | Effet mesuré (passages isolés) |
+|---|---|---|
+| `16f3dd2` | **1. Transits du point de départ réutilisés.** Chaque contingence repart de l'état restauré du cas de base, identique bit à bit. `AcNetworkVector` garde une copie des tableaux de transits et de dérivées calculés pour un nouvel état complet ; si le même état est remis, il recopie ces tableaux et ne recalcule que les branches modifiées depuis (déclenchement, prises, connexion). Vérifié en recalculant tout à chaque réutilisation : 7421 réutilisations, toutes identiques bit à bit. | ≈ −2,4 s |
+| `152470c` | **2. Pré-filtre vectorisé des violations.** Les plus petits seuils et les transits (via une interface générique `ArrayEvaluable`, implémentée par les termes vectorisés) sont lus dans des tableaux plats ; tensions et seuils des bus aussi. Les objets branche et bus ne sont touchés que pour les côtés ou bus au-dessus d'un seuil. Les violations de tension écartées par la violation de référence ne sont plus construites. `LimitViolationManager` reste générique (repli sur l'évaluation objet sinon). | ≈ −3,8 s |
+| — | **3. Remplissage direct de la matrice LU : non fait.** La jacobienne émet ses valeurs dans l'ordre des dérivées, la matrice LU a ses lignes triées : la correspondance n'est jamais l'identité. Il faudrait changer l'ordre d'émission dans `EquationArray` pour ≈ 1 s. | — |
+| `7258e33` | **4. Variables en tableau plat** (type, élément, ligne), mis en cache par l'index, pour l'initialisation de l'état, la recopie et le contrôle d'état non réaliste. **5. Compensateurs avec automate mis en cache** dans `MonitoringVoltageOuterLoop.isNeeded`, au lieu de parcourir tous les générateurs. | ≈ −0,7 s |
+
+Tests : 1489, 0 échec. Résultats identiques en NR pur et en configuration par défaut.
+
 ## Reproduire
 
 Bibliothèque native améliorée :
@@ -394,3 +414,6 @@ Configurations :
 | `aff5d5d` | Termes additionnels inactifs ignorés dans le mismatch et la jacobienne |
 | `db71b65` | Tensions des bus dans des tableaux du réseau, identifiants de bus en cache |
 | `6cf6827` | Accès direct à l'activité des termes dans les boucles rapides |
+| `16f3dd2` | Transits du point de départ réutilisés (état identique) |
+| `152470c` | Pré-filtre vectorisé de la détection des violations |
+| `7258e33` | Variables en tableau plat, compensateurs avec automate en cache |
