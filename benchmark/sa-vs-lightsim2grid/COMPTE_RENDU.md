@@ -20,17 +20,25 @@ parenthèses.
 | OLF d'origine (`16838da`) + powsybl-math-native 1.5.0 officiel | 317,3 s (318,1) | 42,8 ms | référence |
 | OLF branche + powsybl-math-native 1.5.0 officiel | 78,4 s (91,4) | 10,6 ms | identiques ¹ |
 | OLF branche + powsybl-math-native amélioré (`-Drgrowth=-1e-12`) | 67,8 s (78,5) | 9,1 ms | identiques ¹ |
-| **idem + restauration d'état incrémentale** (`42d48c3`) ² | **64,5 s** (69,1) | **8,7 ms** | identiques ¹ |
-| lightsim2grid 1.3.0, sans violations | 43,4 s (48,7) | 5,8 ms | |
-| lightsim2grid 1.3.0, avec violations (2,8 M, non filtrées) | 46,6 s (47,3) | 6,3 ms | |
+| idem + restauration d'état incrémentale (`42d48c3`) ² | 64,5 s (69,1) | 8,7 ms | identiques ¹ |
+| **idem + optimisations Java de la dernière série** (`6cf6827`) ³ | **49,6 s** (50,1) | **6,7 ms** | identiques ¹ |
+| lightsim2grid 1.3.0, sans violations | 42,8 s (43,4 s lors d'un créneau précédent) | 5,8 ms | |
+| lightsim2grid 1.3.0, avec violations (2,8 M, non filtrées) | 43,4 s (46,6 s lors d'un créneau précédent) | 5,8 ms | |
 
 ¹ Mêmes statuts (7420 convergées, 2 en limite d'itérations) et mêmes 1 021 140 violations.
 ² Mesuré dans un créneau ultérieur, en A/B sur 3 tours contre la version précédente (75,2 → 66,6 s
 en moyenne, soit −11 %) ; voir la section « Restauration d'état incrémentale ».
+³ A/B sur 3 tours, en alternance avec la version `f663a8c` (restauration incrémentale) :
+63,9 / 68,2 / 69,4 s contre 50,1 / 49,6 / 52,0 s, soit **−25 %** en moyenne (67,2 → 50,6 s).
+lightsim2grid a été relancé juste après, dans le même créneau. Voir la section « Dernière série :
+optimisations Java sans toucher à `EquationArray` ».
 
-- Le gain total est **×4,9** par rapport à l'origine.
-- **L'écart avec lightsim2grid passe de ×6,8 à ×1,4** à travail comparable (violations comprises).
-- **La parité n'est pas atteinte** : l'écart restant est entièrement côté Java (voir plus bas).
+- Le gain total est **×6,4** par rapport à l'origine (317,3 → 49,6 s).
+- **L'écart avec lightsim2grid passe de ×6,8 à ×1,15** à travail comparable (violations comprises,
+  49,6 contre 43,4 s dans le même créneau).
+- **La parité n'est pas tout à fait atteinte** : il reste ≈ 0,9 ms par contingence, côté Java.
+- En configuration par défaut (boucles externes), OLF passe de 297 à **272,7 s**, contre 259,4 s
+  pour lightsim2grid `NROuter_KLU` (mêmes 1 062 061 violations qu'avant).
 
 ### Bibliothèque native améliorée (powsybl-math-native)
 
@@ -64,28 +72,25 @@ du classpath.
 - Sur la jacobienne de ce cas, une refactorisation coûte 1,58 ms dans OLF en mode `rcond`, contre
   2,06 ms avec la bibliothèque officielle. En banc C, `klu_refactor` seul coûte 1,4 ms.
 
-### D'où vient l'écart restant (≈ 8,7 contre ≈ 6,3 ms par contingence)
+### D'où vient l'écart restant (≈ 6,7 contre ≈ 5,8 ms par contingence)
 
-Profil JFR de la dernière version (NR pur, 1 thread, bibliothèque native améliorée) :
+- **KLU (natif)** : ≈ 2,1 ms par contingence (1,3 refactorisation en moyenne), autant que
+  lightsim2grid. **KLU n'est plus en cause.**
+- **Java** : le reste, ≈ 4,6 ms par contingence. Mesures chronométrées en place (avant les deux
+  derniers commits) :
 
-- **KLU (natif)** : ≈ 2,8 ms par contingence, autant que lightsim2grid. **KLU n'est plus en
-  cause.**
-- **Java** : tout le reste de l'écart. Sa répartition :
+| Poste Java | Par appel | Appels par contingence |
+|---|---|---|
+| Transits et dérivées par branche (`AcNetworkVector`) | ≈ 620 µs | 2,3 |
+| Remplissage des valeurs de la jacobienne | ≈ 650 µs | 1,3 |
+| Évaluation du mismatch | ≈ 200 µs | 2,3 |
+| Initialisation de l'état (hors transits) | ≈ 420 µs | 1 |
+| Recopie de l'état dans le réseau | ≈ 390 µs | 1 |
 
-| Poste Java | Part du temps Java |
-|---|---|
-| Évaluation du vecteur des écarts (mismatch) | 24 % |
-| Remplissage des valeurs de la jacobienne | 19,5 % |
-| Transits par branche à partir de l'état (`AcNetworkVector`) | 19,5 % |
-| Divers Newton-Raphson (initialisation de l'état, normes, recopie dans le réseau) | 15 % |
-| Détection des violations | 13,5 % |
-| Contrôle d'état non réaliste | 2,7 % |
-| Boucles externes (contrôle `isNeeded`) | 2,2 % |
-| **Restauration de l'état réseau** | **0,8 %** (≈ 15 % avant la restauration incrémentale) |
-
-Les trois premiers postes (63 %) relisent chacun les mêmes données de branche (tensions, sinus,
-cosinus) à chaque itération, là où lightsim2grid fait un seul produit creux avec Ybus en C++. Les
-pistes pour combler l'écart sont dans la section « Ce qui reste, et comment aller plus loin ».
+Les deux derniers commits ont ensuite réduit l'initialisation, la recopie (tensions stockées dans
+des tableaux) et le remplissage de la jacobienne (accès direct à l'activité des termes). Le
+calcul des transits est limité par la mémoire : il lit une vingtaine de tableaux par branche, que
+la factorisation KLU a chassés du cache entre deux appels.
 
 ## Résultats de l'étape précédente (bibliothèque native officielle)
 
@@ -206,26 +211,24 @@ Deux attendus figés ont été mis à jour :
 - **Restauration de l'état réseau** : elle est maintenant incrémentale (≈ 0,8 % du temps Java,
   contre ≈ 15 %).
 
-**Pistes pour se rapprocher de lightsim2grid, par gain attendu :**
+- **Termes « objet » inactifs, initialisation de l'état, violations, remplissage de la jacobienne** :
+  voir la section « Dernière série ».
 
-1. **Un seul passage par branche et par itération (≈ −10 à −15 s, le plus gros levier).** Un noyau
-   unique calculerait pour chaque branche P, Q et leurs dérivées en une fois, et les ajouterait
-   directement dans le vecteur des écarts et dans les valeurs de la jacobienne, aux positions déjà
-   connues. On supprimerait l'étape intermédiaire `EquationArray`. Ces trois postes font 63 % du
-   temps Java.
-2. **Garder l'état en tableaux entre deux contingences (≈ −4 à −6 s).** Sauvegarder et restaurer
-   directement le vecteur d'état, au lieu de passer par les objets bus à chaque initialisation et
-   à chaque fin de calcul ; ne recopier dans les objets que ce qui sert aux résultats.
-3. **Violations calculées à partir des tableaux (≈ −4 s).** Lire les transits dans
-   `AcBranchVector` sans passer par les objets branche, avec un premier filtre sur le plus petit
-   seuil avant de construire le moindre objet de résultat.
-4. **Moins de travail par itération (quelques secondes).** Calculer les normes et le critère d'arrêt
-   pendant l'évaluation du mismatch, et ne faire le contrôle d'état non réaliste qu'en fin de
-   calcul.
+**Pistes restantes, en gardant `EquationArray` :**
 
-Cumulées, les pistes 1 à 3 permettraient de viser 45 à 50 s, donc la parité ou presque avec
-lightsim2grid (46,6 s avec violations). Une machine plus stable serait nécessaire pour mesurer ces
-gains de façon fiable.
+1. **Disposition mémoire des données de branche.** Le calcul des transits lit une vingtaine de
+   tableaux séparés par branche (paramètres, numéros de lignes, états). Regrouper les paramètres
+   constants d'une branche dans un seul tableau entrelacé réduirait le nombre de flux mémoire. C'est
+   interne à `AcBranchVector`, mais touche les évaluateurs.
+2. **Violations lues dans les tableaux.** La détection relit encore P et Q de chaque branche
+   surveillée via les objets (`computeApparentPower1`). Un accès direct aux tableaux serait plus
+   rapide, mais demande une interface générique pour ne pas lier `LimitViolationManager` au mode
+   vectorisé.
+3. **Variables à trouver en tableaux plats.** L'initialisation de l'état et la recopie parcourent
+   encore les objets `Variable` (≈ 13 000) ; des tableaux (type, élément, ligne) mis en cache par
+   l'index supprimeraient ces accès.
+4. **Moins de travail par itération.** Calculer les normes pendant l'évaluation du mismatch, et ne
+   faire le contrôle d'état non réaliste qu'en fin de calcul.
 
 **Hors de ce périmètre :**
 
@@ -314,6 +317,33 @@ Gain : **−8,6 s, soit −11 %**, à résultats identiques. C'est plus que la p
 restauration elle-même (≈ 1,2 ms par contingence) : en ne touchant plus tous les objets, on évite
 aussi de chasser du cache les données du calcul qui suit.
 
+## Dernière série : optimisations Java sans toucher à `EquationArray`
+
+Pour garder le caractère générique du système d'équations, toutes les optimisations restent
+internes à `EquationArray`, au réseau ou à l'index. Elles ont été guidées par des mesures en
+place : JFR avec `-XX:+DebugNonSafepoints` (attribution exacte des lignes) et chronométrage des
+étapes, car le profil JFR par défaut attribuait à tort le coût aux termes shunt.
+
+| Commit | Modification | Effet mesuré |
+|---|---|---|
+| `aff5d5d` | **Termes additionnels inactifs ignorés.** En analyse de sécurité, chaque ligne déclenchable reçoit aussi des termes « branche ouverte » (P et Q, côtés 1 et 2) : ≈ 15 000 termes objet par tableau d'équations, presque tous inactifs, mais parcourus à chaque mismatch et à chaque remplissage de la jacobienne. `EquationArray` garde maintenant des tables compactes des seuls termes actifs, mises à jour de façon incrémentale à l'activation (tri conservé, donc résultats indépendants de l'historique). Les variables sont aussi parcourues dans l'ordre des éléments à l'initialisation. | 76,7 → 58,0 s (mismatch 830 → 200 µs par appel, jacobienne 1 160 → 650 µs) |
+| `db71b65` | **Tensions des bus dans des tableaux du réseau.** Module et angle sont stockés dans des tableaux du `LfNetwork` indexés par numéro de bus, avec les mêmes accesseurs (`getV`, `setAngle`…) et la même arithmétique. L'initialisation de l'état (`VoltageInitializer.getMagnitude(network, num)`), la recopie dans le réseau et la restauration n'accèdent plus aux objets bus. Identifiant, poste et localisation des violations des bus sont mis en cache au lieu d'être relus dans la vue bus IIDM. | ≈ −3 s |
+| `6cf6827` | **Accès direct à l'activité des termes** dans les boucles rapides du mismatch et de la jacobienne (tableau interne au lieu de `ArrayList.get` puis `TByteArrayList.getQuick` par entrée). | ≈ −5 à −8 s |
+
+Essais abandonnés :
+
+- **Vectoriser les termes shunt** : il n'y en a que 204 ; leur coût apparent venait d'une mauvaise
+  attribution du profil.
+- **Dérivées calculées à la demande** : séparer le calcul des transits de celui des dérivées
+  (inutiles à la dernière itération) a coûté 7 s de plus. La passe sur les transits seuls coûte
+  presque autant que la passe complète, car le coût est la lecture des données de branche, qui
+  doublait.
+- **Trigonométrie** : `FastMath.sinAndCos` (jafama) coûte ≈ 5 ns, plus rapide que `Math.sin` +
+  `Math.cos` ; ce n'est pas le goulot.
+
+Tests : 1489, 0 échec. Résultats identiques en NR pur (1 021 140 violations) et en configuration
+par défaut (1 062 061 violations).
+
 ## Reproduire
 
 Bibliothèque native améliorée :
@@ -361,3 +391,6 @@ Configurations :
 | `780015f` | Patch powsybl-math-native amélioré et comparaison mono-thread |
 | `839ae9b` | Sauvegarde/restauration d'état vectorisée (tableaux plats) |
 | `42d48c3` | Restauration d'état incrémentale (setters qui marquent les éléments modifiés) |
+| `aff5d5d` | Termes additionnels inactifs ignorés dans le mismatch et la jacobienne |
+| `db71b65` | Tensions des bus dans des tableaux du réseau, identifiants de bus en cache |
+| `6cf6827` | Accès direct à l'activité des termes dans les boucles rapides |
