@@ -41,8 +41,8 @@ même créneau : 46,8 s sans violations, 49,3 s avec. Voir la section « Pistes 
 - **Dans le même créneau, OLF est au niveau de lightsim2grid** : 48,0 s en moyenne (47,0 à 49,4 s),
   contre 46,8 s sans violations et 49,3 s avec violations pour lightsim2grid. L'écart restant est dans
   le bruit de la machine (±10 %).
-- En configuration par défaut (boucles externes), A/B dans un créneau lent : 345,8 → 325,6 s, mêmes
-  1 062 061 violations. Dans un créneau précédent, OLF était à 272,7 s contre 259,4 s pour
+- En configuration par défaut (boucles externes), A/B sur 2 tours dans un créneau lent : 345,8 / 337,3 s
+  → 325,6 / 324,6 s (−5 %), mêmes 1 062 061 violations. Dans un créneau précédent, OLF était à 272,7 s contre 259,4 s pour
   lightsim2grid `NROuter_KLU`.
 
 ### Bibliothèque native améliorée (powsybl-math-native)
