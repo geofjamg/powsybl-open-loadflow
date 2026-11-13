@@ -18,7 +18,6 @@ import com.powsybl.openloadflow.ac.solver.AcSolverFactory;
 import com.powsybl.openloadflow.ac.solver.AcSolverResult;
 import com.powsybl.openloadflow.ac.solver.AcSolverStatus;
 import com.powsybl.openloadflow.equations.EquationSystem;
-import com.powsybl.openloadflow.equations.Variable;
 import com.powsybl.openloadflow.lf.LoadFlowEngine;
 import com.powsybl.openloadflow.lf.outerloop.OuterLoopResult;
 import com.powsybl.openloadflow.lf.outerloop.OuterLoopStatus;
@@ -162,14 +161,19 @@ public class AcloadFlowEngine implements LoadFlowEngine<AcVariableType, AcEquati
         AcLoadFlowParameters parameters = context.getParameters();
         LfNetwork network = context.getNetwork();
         Map<String, Double> busesOutOfNormalVoltageRange = new LinkedHashMap<>();
-        for (Variable<AcVariableType> v : equationSystem.getIndex().getSortedVariablesToFind()) {
-            if (v.getType() == AcVariableType.BUS_V) {
-                double value = equationSystem.getStateVector().get(v.getRow());
-                if ((value < parameters.getMinRealisticVoltage() || value > parameters.getMaxRealisticVoltage())
-                        && !network.getBus(v.getElementNum()).isFictitious()) {
+        var table = equationSystem.getIndex().getVariablesToFindTable();
+        double[] state = equationSystem.getStateVector().get();
+        double minRealisticVoltage = parameters.getMinRealisticVoltage();
+        double maxRealisticVoltage = parameters.getMaxRealisticVoltage();
+        for (int i = 0; i < table.size(); i++) {
+            if (table.types()[i] == AcVariableType.BUS_V) {
+                double value = state[table.rows()[i]];
+                int num = table.elementNums()[i];
+                if ((value < minRealisticVoltage || value > maxRealisticVoltage)
+                        && !network.getBus(num).isFictitious()) {
                     // only consider unrealistic if nominal voltage high enough
-                    if (network.getBus(v.getElementNum()).getNominalV() >= minNominalVoltageRealisticVoltageCheck) {
-                        busesOutOfNormalVoltageRange.put(network.getBus(v.getElementNum()).getId(), value);
+                    if (network.getBus(num).getNominalV() >= minNominalVoltageRealisticVoltageCheck) {
+                        busesOutOfNormalVoltageRange.put(network.getBus(num).getId(), value);
                     }
                 }
             }

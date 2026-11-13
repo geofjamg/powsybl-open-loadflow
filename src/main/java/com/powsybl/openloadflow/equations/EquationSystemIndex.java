@@ -799,6 +799,40 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
     private List<Variable<V>> variablesByElement;
 
     /**
+     * Flat view of the variables to find, sorted by element (see {@link #getVariablesToFindSortedByElement()}):
+     * type, element number and row of each variable, for fast loops not accessing variable objects.
+     */
+    public record VariablesTable<V>(V[] types, int[] elementNums, int[] rows) {
+        public int size() {
+            return rows.length;
+        }
+    }
+
+    private List<Variable<V>> variablesTableSource;
+    private VariablesTable<V> variablesTable;
+
+    @SuppressWarnings("unchecked")
+    public VariablesTable<V> getVariablesToFindTable() {
+        List<Variable<V>> variables = getVariablesToFindSortedByElement();
+        if (variablesTableSource != sortedVariablesToFind) {
+            int size = variables.size();
+            V[] types = size == 0 ? (V[]) new Enum<?>[0]
+                    : (V[]) java.lang.reflect.Array.newInstance(variables.get(0).getType().getDeclaringClass(), size);
+            int[] elementNums = new int[size];
+            int[] rows = new int[size];
+            for (int i = 0; i < size; i++) {
+                Variable<V> variable = variables.get(i);
+                types[i] = variable.getType();
+                elementNums[i] = variable.getElementNum();
+                rows[i] = variable.getRow();
+            }
+            variablesTable = new VariablesTable<>(types, elementNums, rows);
+            variablesTableSource = sortedVariablesToFind;
+        }
+        return variablesTable;
+    }
+
+    /**
      * Variables to find sorted by element number (and then type), instead of row order. Iterating in this order to
      * read or write the values of the elements accesses them sequentially in memory, which is much faster for large
      * systems than the row order (that is aligned with the equations).

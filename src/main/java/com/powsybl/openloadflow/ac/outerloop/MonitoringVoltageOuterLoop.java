@@ -14,6 +14,7 @@ import com.powsybl.openloadflow.lf.outerloop.OuterLoopResult;
 import com.powsybl.openloadflow.lf.outerloop.OuterLoopStatus;
 import com.powsybl.openloadflow.network.LfBus;
 import com.powsybl.openloadflow.network.LfGenerator;
+import com.powsybl.openloadflow.network.LfNetwork;
 import com.powsybl.openloadflow.network.LfStaticVarCompensator;
 import com.powsybl.openloadflow.network.VoltageControl;
 import com.powsybl.openloadflow.util.Reports;
@@ -141,19 +142,36 @@ public class MonitoringVoltageOuterLoop implements AcOuterLoop {
         return new OuterLoopResult(this, status);
     }
 
+    // static var compensators with a stand by automaton of a network (structural, so cached)
+    private record SvcsWithAutomaton(LfNetwork network, List<LfGenerator> svcs) {
+    }
+
+    private volatile SvcsWithAutomaton svcsWithAutomaton;
+
+    private List<LfGenerator> getSvcsWithAutomaton(LfNetwork network) {
+        SvcsWithAutomaton cache = svcsWithAutomaton;
+        if (cache == null || cache.network() != network) {
+            List<LfGenerator> svcs = new ArrayList<>();
+            for (LfBus bus : network.getBuses()) {
+                for (LfGenerator generator : bus.getGenerators()) {
+                    if (generator instanceof LfStaticVarCompensator svc && svc.getStandByAutomaton().isPresent()) {
+                        svcs.add(generator);
+                    }
+                }
+            }
+            cache = new SvcsWithAutomaton(network, svcs);
+            svcsWithAutomaton = cache;
+        }
+        return cache.svcs();
+    }
+
     @Override
     public boolean isNeeded(AcLoadFlowContext context) {
         // fast check first: is there any monitoring static var compensator with a stand by automaton?
         boolean hasMonitoringSvcWithAutomaton = false;
-        for (LfBus bus : context.getNetwork().getBuses()) {
-            for (LfGenerator generator : bus.getGenerators()) {
-                if (generator.getGeneratorControlType() == LfGenerator.GeneratorControlType.MONITORING_VOLTAGE
-                        && ((LfStaticVarCompensator) generator).getStandByAutomaton().isPresent()) {
-                    hasMonitoringSvcWithAutomaton = true;
-                    break;
-                }
-            }
-            if (hasMonitoringSvcWithAutomaton) {
+        for (LfGenerator generator : getSvcsWithAutomaton(context.getNetwork())) {
+            if (generator.getGeneratorControlType() == LfGenerator.GeneratorControlType.MONITORING_VOLTAGE) {
+                hasMonitoringSvcWithAutomaton = true;
                 break;
             }
         }
