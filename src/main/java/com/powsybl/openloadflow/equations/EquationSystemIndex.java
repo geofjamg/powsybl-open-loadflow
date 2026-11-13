@@ -55,7 +55,7 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
     // ghost mode: deactivated equations keep their column and variables not referenced anymore keep their row, as long
     // as each ghost equation is paired on the diagonal with an orphan variable. The Jacobian structure is then kept
     // (identity on ghost columns), which avoids rebuilding the equation system index, the Jacobian matrix and its LU
-    // decomposition each time a bus is disconnected (contingencies creating islands) and reconnected.
+    // decomposition each time equations are temporarily deactivated and then reactivated.
     private boolean ghostMode = false;
     private final Set<SingleEquation<V, E>> ghostSingleEquations = new LinkedHashSet<>();
     private final Set<Variable<V>> orphanVariables = new LinkedHashSet<>();
@@ -800,8 +800,8 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
 
     /**
      * Variables to find sorted by element number (and then type), instead of row order. Iterating in this order to
-     * read or write network elements accesses them sequentially in memory, which is much faster for large networks
-     * than the row order (that is aligned with the equations).
+     * read or write the values of the elements accesses them sequentially in memory, which is much faster for large
+     * systems than the row order (that is aligned with the equations).
      */
     public List<Variable<V>> getVariablesToFindSortedByElement() {
         update();

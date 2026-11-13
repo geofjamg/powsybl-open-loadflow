@@ -77,8 +77,8 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     private TIntArrayList additionalEvalElementNums;
     private List<SingleEquationTerm<V, E>> additionalEvalTerms;
 
-    // additional single terms are often mostly inactive (for instance open branch terms of all branches that can be
-    // disconnected by a contingency): only active ones are kept in these compact tables, rebuilt on term activation
+    // additional single terms may be mostly inactive (terms created in advance for a structure change that has not
+    // happened yet): only active ones are kept in these compact tables, rebuilt on term activation
     // change, so that evaluation and derivative loops do not visit inactive terms at each iteration
     private boolean activeAdditionalTermsValid = false;
     private final TIntArrayList activeEvalIndexes = new TIntArrayList(); // indexes in additionalEval* lists

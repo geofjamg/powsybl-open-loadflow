@@ -26,11 +26,11 @@ import java.util.Objects;
  *     ordering) give much better results with sorted row indices, whereas derivatives are not always emitted in row
  *     order.</li>
  *     <li>Its structure can be kept when the structure of the Jacobian matrix shrinks (equations and variables are
- *     removed, for instance when buses are disconnected by a contingency): the values of the smaller Jacobian are
+ *     removed, for instance when equations of some elements are deactivated): the values of the smaller Jacobian are
  *     mapped on the larger structure, removed equations and variables being replaced by identity (1 on the diagonal,
  *     zero right hand side). This is the same system (it is block diagonal with the identity block) but the LU
  *     symbolic analysis can be reused (only a numerical refactorization is needed) and when the Jacobian structure
- *     comes back to the initial one (contingency restored), the mapping is the identity.</li>
+ *     comes back to the initial one (equations reactivated), the mapping is the identity.</li>
  * </ul>
  * Equations and variables are identified across structure changes by their type and element number.
  *

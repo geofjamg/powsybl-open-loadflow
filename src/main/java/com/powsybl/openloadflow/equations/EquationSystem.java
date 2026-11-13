@@ -46,7 +46,7 @@ public class EquationSystem<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
 
     /**
      * For each equation type, the type of the variable (of the same element) that is naturally paired with it
-     * on the diagonal of the Jacobian matrix (for instance bus active power target with bus voltage angle).
+     * on the diagonal of the Jacobian matrix (in AC load flow for instance: active power target with voltage angle).
      * When defined, variables are numbered in the same order as equations, so that the Jacobian has a structurally
      * non-zero diagonal and an almost symmetric pattern, which is much better for sparse LU ordering and fill-in.
      */
