@@ -167,6 +167,7 @@ public abstract class AbstractImpedantLfBranch extends AbstractLfBranch {
     @Override
     public void setP1(Evaluable p1) {
         this.p1 = Objects.requireNonNull(p1);
+        network.onBranchEvaluableChange();
     }
 
     @Override
@@ -177,6 +178,7 @@ public abstract class AbstractImpedantLfBranch extends AbstractLfBranch {
     @Override
     public void setP2(Evaluable p2) {
         this.p2 = Objects.requireNonNull(p2);
+        network.onBranchEvaluableChange();
     }
 
     @Override
@@ -187,6 +189,7 @@ public abstract class AbstractImpedantLfBranch extends AbstractLfBranch {
     @Override
     public void setQ1(Evaluable q1) {
         this.q1 = Objects.requireNonNull(q1);
+        network.onBranchEvaluableChange();
     }
 
     @Override
@@ -197,6 +200,7 @@ public abstract class AbstractImpedantLfBranch extends AbstractLfBranch {
     @Override
     public void setQ2(Evaluable q2) {
         this.q2 = Objects.requireNonNull(q2);
+        network.onBranchEvaluableChange();
     }
 
     @Override
@@ -207,6 +211,7 @@ public abstract class AbstractImpedantLfBranch extends AbstractLfBranch {
     @Override
     public void setI1(Evaluable i1) {
         this.i1 = Objects.requireNonNull(i1);
+        network.onBranchEvaluableChange();
     }
 
     @Override
@@ -217,6 +222,7 @@ public abstract class AbstractImpedantLfBranch extends AbstractLfBranch {
     @Override
     public void setI2(Evaluable i2) {
         this.i2 = Objects.requireNonNull(i2);
+        network.onBranchEvaluableChange();
     }
 
     @Override

@@ -11,6 +11,7 @@ import com.powsybl.commons.PowsyblException;
 import com.powsybl.math.matrix.DenseMatrix;
 import com.powsybl.openloadflow.network.ElementType;
 import com.powsybl.openloadflow.network.LfElement;
+import com.powsybl.openloadflow.util.ArrayEvaluable;
 import gnu.trove.impl.Constants;
 import gnu.trove.list.array.TByteArrayList;
 import gnu.trove.list.array.TIntArrayList;
@@ -40,8 +41,15 @@ public class EquationTermArray<V extends Enum<V> & Quantity, E extends Enum<E> &
 
         boolean isDisabled(int termElementNum);
 
+        /**
+         * Values of all term elements, indexed by term element number. The returned array must stay the storage of
+         * the values (same array returned by each call).
+         */
         double[] eval();
 
+        /**
+         * Must be equal to {@code eval()[termElementNum]}.
+         */
         double eval(int termElementNum);
 
         double[][] evalDer();
@@ -213,7 +221,7 @@ public class EquationTermArray<V extends Enum<V> & Quantity, E extends Enum<E> &
         }
     }
 
-    public static class EquationTermArrayElementImpl<V extends Enum<V> & Quantity, E extends Enum<E> & Quantity> implements EquationTerm<V, E> {
+    public static class EquationTermArrayElementImpl<V extends Enum<V> & Quantity, E extends Enum<E> & Quantity> implements EquationTerm<V, E>, ArrayEvaluable {
 
         final EquationTermArray<V, E> equationTermArray;
 
@@ -233,6 +241,16 @@ public class EquationTermArray<V extends Enum<V> & Quantity, E extends Enum<E> &
         @Override
         public double eval() {
             return equationTermArray.eval(termElementNum);
+        }
+
+        @Override
+        public double[] getValues() {
+            return equationTermArray.eval();
+        }
+
+        @Override
+        public int getValueIndex() {
+            return termElementNum;
         }
 
         @Override

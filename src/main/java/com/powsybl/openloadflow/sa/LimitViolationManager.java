@@ -15,10 +15,12 @@ import com.powsybl.openloadflow.network.LfBranch;
 import com.powsybl.openloadflow.network.LfBus;
 import com.powsybl.openloadflow.network.LfElement;
 import com.powsybl.openloadflow.network.LfNetwork;
+import com.powsybl.openloadflow.util.ArrayEvaluable;
 import com.powsybl.openloadflow.util.Evaluable;
 import com.powsybl.openloadflow.util.PerUnit;
 import com.powsybl.security.*;
 import com.powsybl.security.limitreduction.LimitReduction;
+import net.jafama.FastMath;
 import org.apache.commons.lang3.function.TriFunction;
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -76,17 +78,29 @@ public class LimitViolationManager {
     public void detectViolations(LfNetwork network, Predicate<LfBranch> isBranchDisabled) {
         Objects.requireNonNull(network);
 
-        // Detect violation limits on branches
-        for (MonitoredBranchSide monitoredSide : getMonitoredBranchSides(network)) {
-            if (!isBranchDisabled.test(monitoredSide.branch)) {
-                detectBranchSideViolations(monitoredSide);
+        // Detect violation limits on branches: fast pre-filter on flat arrays (no access to branch objects), detailed
+        // detection only for branch sides above their smallest limit
+        getMonitoredBranchSides(network);
+        FlatMonitoredBranchSides flatSides = getFlatMonitoredBranchSides(network);
+        MonitoredBranchSide[] sides = flatSides.sides;
+        for (int k = 0; k < sides.length; k++) {
+            if (flatSides.mayBeViolated(k)) {
+                MonitoredBranchSide monitoredSide = sides[k];
+                if (!isBranchDisabled.test(monitoredSide.branch)) {
+                    detectBranchSideViolations(monitoredSide);
+                }
             }
         }
 
-        // Detect violation limits on buses
-        for (LfBus bus : network.getBuses()) {
-            if (!bus.isDisabled()) {
-                detectBusViolations(bus);
+        // Detect violation limits on buses: same pre-filter with voltages and limits read from flat arrays
+        FlatBusLimits busLimits = flatSides.busLimits;
+        for (int num = 0; num < busLimits.lowVoltageLimit.length; num++) {
+            double v = network.getBusV(num);
+            if (v > busLimits.highVoltageLimit[num] || v < busLimits.lowVoltageLimit[num]) {
+                LfBus bus = network.getBus(num);
+                if (!bus.isDisabled()) {
+                    detectBusViolations(bus);
+                }
             }
         }
 
@@ -173,7 +187,113 @@ public class LimitViolationManager {
                                        List<LfBranch.LfLimitsGroup> apparentPowerLimitsGroups, double minApparentPowerLimit) {
     }
 
-    private record MonitoredBranchSides(LfNetwork network, List<MonitoredBranchSide> sides) {
+    private static final class MonitoredBranchSides {
+        private final LfNetwork network;
+        private final List<MonitoredBranchSide> sides;
+        private FlatMonitoredBranchSides flatSides;
+
+        private MonitoredBranchSides(LfNetwork network, List<MonitoredBranchSide> sides) {
+            this.network = network;
+            this.sides = sides;
+        }
+
+        LfNetwork network() {
+            return network;
+        }
+
+        List<MonitoredBranchSide> sides() {
+            return sides;
+        }
+    }
+
+    /**
+     * Voltage limits (per unit) of buses indexed by bus number (NaN if no limit).
+     */
+    private record FlatBusLimits(double[] lowVoltageLimit, double[] highVoltageLimit) {
+
+        static FlatBusLimits create(LfNetwork network) {
+            int busCount = network.getBuses().size();
+            double[] low = new double[busCount];
+            double[] high = new double[busCount];
+            for (int num = 0; num < busCount; num++) {
+                LfBus bus = network.getBus(num);
+                low[num] = bus.getLowVoltageLimit();
+                high[num] = bus.getHighVoltageLimit();
+            }
+            return new FlatBusLimits(low, high);
+        }
+    }
+
+    /**
+     * Flat view of monitored branch sides for a fast pre-filter: smallest limit of each type and direct access to
+     * active and reactive power values when they are stored in arrays ({@link ArrayEvaluable}). A side may be violated
+     * only if a value is above the corresponding smallest limit. Sides with current limits, or whose powers are not
+     * stored in arrays, always go through the detailed detection.
+     */
+    private static final class FlatMonitoredBranchSides {
+
+        private final int branchEvaluableVersion;
+        private final MonitoredBranchSide[] sides;
+        private final boolean[] alwaysDetailed;
+        private final double[] minActivePowerLimit;
+        private final double[] minApparentPowerLimit;
+        private final double[][] pValues;
+        private final int[] pIndex;
+        private final double[][] qValues;
+        private final int[] qIndex;
+        private final FlatBusLimits busLimits;
+
+        private FlatMonitoredBranchSides(LfNetwork network, List<MonitoredBranchSide> sideList) {
+            branchEvaluableVersion = network.getBranchEvaluableVersion();
+            sides = sideList.toArray(new MonitoredBranchSide[0]);
+            int size = sides.length;
+            alwaysDetailed = new boolean[size];
+            minActivePowerLimit = new double[size];
+            minApparentPowerLimit = new double[size];
+            pValues = new double[size][];
+            pIndex = new int[size];
+            qValues = new double[size][];
+            qIndex = new int[size];
+            for (int k = 0; k < size; k++) {
+                MonitoredBranchSide m = sides[k];
+                boolean side1 = m.side() == TwoSides.ONE;
+                minActivePowerLimit[k] = m.activePowerLimitsGroups().isEmpty() ? Double.POSITIVE_INFINITY : m.minActivePowerLimit();
+                minApparentPowerLimit[k] = m.apparentPowerLimitsGroups().isEmpty() ? Double.POSITIVE_INFINITY : m.minApparentPowerLimit();
+                Evaluable p = side1 ? m.branch().getP1() : m.branch().getP2();
+                Evaluable q = side1 ? m.branch().getQ1() : m.branch().getQ2();
+                if (!m.currentLimitsGroups().isEmpty() || !(p instanceof ArrayEvaluable) || !(q instanceof ArrayEvaluable)) {
+                    alwaysDetailed[k] = true;
+                } else {
+                    pValues[k] = ((ArrayEvaluable) p).getValues();
+                    pIndex[k] = ((ArrayEvaluable) p).getValueIndex();
+                    qValues[k] = ((ArrayEvaluable) q).getValues();
+                    qIndex[k] = ((ArrayEvaluable) q).getValueIndex();
+                }
+            }
+            busLimits = FlatBusLimits.create(network);
+        }
+
+        boolean mayBeViolated(int k) {
+            if (alwaysDetailed[k]) {
+                return true;
+            }
+            double p = pValues[k][pIndex[k]];
+            if (Math.abs(p) > minActivePowerLimit[k]) {
+                return true;
+            }
+            double q = qValues[k][qIndex[k]];
+            // same computation as LfBranch.computeApparentPower1 and computeApparentPower2
+            return FastMath.sqrt(p * p + q * q) > minApparentPowerLimit[k];
+        }
+    }
+
+    private FlatMonitoredBranchSides getFlatMonitoredBranchSides(LfNetwork network) {
+        LimitViolationManager owner = reference != null ? reference : this;
+        MonitoredBranchSides cache = owner.monitoredBranchSides;
+        if (cache.flatSides == null || cache.flatSides.branchEvaluableVersion != network.getBranchEvaluableVersion()) {
+            cache.flatSides = new FlatMonitoredBranchSides(network, cache.sides());
+        }
+        return cache.flatSides;
     }
 
     // cache of the monitored branch sides, shared with managers using this one as reference
@@ -268,11 +388,25 @@ public class LimitViolationManager {
      * Detect violation limits on one branch and add them to the given list
      * @param bus branch of interest
      */
+    /**
+     * True if a bus violation would be discarded because the reference (pre-contingency) violation of this bus is
+     * equivalent or stronger: the violation does not need to be built.
+     */
+    private boolean isBusViolationDiscarded(LfBus bus, LimitViolationType type, double limit, double value) {
+        if (reference == null) {
+            return false;
+        }
+        LimitViolation referenceLimitViolation = reference.violations.get(Pair.of(bus.getId(), null));
+        return referenceLimitViolation != null
+                && violationWeakenedOrEquivalent(referenceLimitViolation, type, limit, value, parameters);
+    }
+
     private void detectBusViolations(LfBus bus) {
         // detect violation limits on a bus
         double scale = bus.getNominalV();
         double busV = bus.getV();
-        if (!Double.isNaN(bus.getHighVoltageLimit()) && busV > bus.getHighVoltageLimit()) {
+        if (!Double.isNaN(bus.getHighVoltageLimit()) && busV > bus.getHighVoltageLimit()
+                && !isBusViolationDiscarded(bus, LimitViolationType.HIGH_VOLTAGE, bus.getHighVoltageLimit() * scale, busV * scale)) {
             LimitViolation limitViolationHigh = new LimitViolationBuilder()
                     .subject(bus.getVoltageLevelId())
                     .type(LimitViolationType.HIGH_VOLTAGE)
@@ -282,7 +416,8 @@ public class LimitViolationManager {
                     .build();
             addBusLimitViolation(limitViolationHigh, bus);
         }
-        if (!Double.isNaN(bus.getLowVoltageLimit()) && busV < bus.getLowVoltageLimit()) {
+        if (!Double.isNaN(bus.getLowVoltageLimit()) && busV < bus.getLowVoltageLimit()
+                && !isBusViolationDiscarded(bus, LimitViolationType.LOW_VOLTAGE, bus.getLowVoltageLimit() * scale, busV * scale)) {
             LimitViolation limitViolationLow = new LimitViolationBuilder()
                     .subject(bus.getVoltageLevelId())
                     .type(LimitViolationType.LOW_VOLTAGE)
@@ -328,21 +463,31 @@ public class LimitViolationManager {
      */
     public static boolean violationWeakenedOrEquivalent(LimitViolation violation1, LimitViolation violation2,
                                                         SecurityAnalysisParameters.IncreasedViolationsParameters violationsParameters) {
-        if (violation2 != null && violation1.getLimitType() == violation2.getLimitType()) {
-            if (violation2.getLimit() < violation1.getLimit()) {
+        return violation2 != null
+                && violationWeakenedOrEquivalent(violation1, violation2.getLimitType(), violation2.getLimit(), violation2.getValue(), violationsParameters);
+    }
+
+    /**
+     * Same as {@link #violationWeakenedOrEquivalent(LimitViolation, LimitViolation, SecurityAnalysisParameters.IncreasedViolationsParameters)}
+     * with the type, limit and value of the second violation, so that it does not need to be built.
+     */
+    private static boolean violationWeakenedOrEquivalent(LimitViolation violation1, LimitViolationType type2, double limit2, double value2,
+                                                         SecurityAnalysisParameters.IncreasedViolationsParameters violationsParameters) {
+        if (violation1.getLimitType() == type2) {
+            if (limit2 < violation1.getLimit()) {
                 // the limit violated is smaller hence the violation is weaker, for flow violations only.
                 // for voltage limits, we have only one limit by limit type.
                 return true;
             }
-            if (violation2.getLimit() == violation1.getLimit()) {
+            if (limit2 == violation1.getLimit()) {
                 // the limit violated is the same: we consider the violations equivalent if the new value is close to previous one.
-                if (isFlowViolation(violation2)) {
-                    return Math.abs(violation2.getValue()) <= Math.abs(violation1.getValue()) * (1 + violationsParameters.getFlowProportionalThreshold());
-                } else if (violation2.getLimitType() == LimitViolationType.HIGH_VOLTAGE) {
+                if (isFlowViolation(type2)) {
+                    return Math.abs(value2) <= Math.abs(violation1.getValue()) * (1 + violationsParameters.getFlowProportionalThreshold());
+                } else if (type2 == LimitViolationType.HIGH_VOLTAGE) {
                     double value = Math.min(violationsParameters.getHighVoltageAbsoluteThreshold(), violation1.getValue() * violationsParameters.getHighVoltageProportionalThreshold());
-                    return violation2.getValue() <= violation1.getValue() + value;
-                } else if (violation2.getLimitType() == LimitViolationType.LOW_VOLTAGE) {
-                    return violation2.getValue() >= violation1.getValue() - Math.min(violationsParameters.getLowVoltageAbsoluteThreshold(),
+                    return value2 <= violation1.getValue() + value;
+                } else if (type2 == LimitViolationType.LOW_VOLTAGE) {
+                    return value2 >= violation1.getValue() - Math.min(violationsParameters.getLowVoltageAbsoluteThreshold(),
                         violation1.getValue() * violationsParameters.getLowVoltageProportionalThreshold());
                 } else {
                     return false;
@@ -352,7 +497,7 @@ public class LimitViolationManager {
         return false;
     }
 
-    private static boolean isFlowViolation(LimitViolation limit) {
-        return limit.getLimitType() == LimitViolationType.CURRENT || limit.getLimitType() == LimitViolationType.ACTIVE_POWER || limit.getLimitType() == LimitViolationType.APPARENT_POWER;
+    private static boolean isFlowViolation(LimitViolationType type) {
+        return type == LimitViolationType.CURRENT || type == LimitViolationType.ACTIVE_POWER || type == LimitViolationType.APPARENT_POWER;
     }
 }

@@ -864,6 +864,19 @@ public class LfNetwork extends AbstractPropertyBag implements PropertyBag, LfEle
         }
     }
 
+    private int branchEvaluableVersion = 0;
+
+    /**
+     * To be called when a branch flow evaluable (P, Q or I) is replaced, so that users caching them can be updated.
+     */
+    public void onBranchEvaluableChange() {
+        branchEvaluableVersion++;
+    }
+
+    public int getBranchEvaluableVersion() {
+        return branchEvaluableVersion;
+    }
+
     public StateChangeTracker getStateChangeTracker() {
         return stateChangeTracker;
     }
