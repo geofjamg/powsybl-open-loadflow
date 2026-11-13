@@ -38,11 +38,15 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
 
     protected boolean reference = false;
 
-    protected double v;
+    // voltage magnitude (kV) and angle: stored in arrays owned by the network once the bus is added to it (much better
+    // memory locality when reading or writing voltages of all buses, which is done at each load flow run)
+    private double[] vStorage = new double[1];
+
+    private double[] angleStorage = new double[1];
+
+    private int storageIndex = 0;
 
     protected Evaluable calculatedV = NAN;
-
-    protected double angle;
 
     private boolean hasGeneratorsWithSlope;
 
@@ -110,8 +114,8 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
 
     protected AbstractLfBus(LfNetwork network, double v, double angle, int numSC, LfNetworkParameters parameters) {
         super(network);
-        this.v = v;
-        this.angle = angle;
+        vStorage[0] = v;
+        angleStorage[0] = angle;
         this.numSC = numSC;
         this.distributedOnConformLoad = parameters.isDistributedOnConformLoad();
         this.forceTargetQInReactiveLimits = parameters.isForceTargetQInReactiveLimits() && parameters.isReactiveLimits();
@@ -558,13 +562,30 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
     }
 
     @Override
+    public boolean setVoltageStorage(double[] vStorage, double[] angleStorage, int storageIndex) {
+        vStorage[storageIndex] = this.vStorage[this.storageIndex];
+        angleStorage[storageIndex] = this.angleStorage[this.storageIndex];
+        this.vStorage = vStorage;
+        this.angleStorage = angleStorage;
+        this.storageIndex = storageIndex;
+        return true;
+    }
+
+    /**
+     * Voltage magnitude in kV.
+     */
+    protected double getVkV() {
+        return vStorage[storageIndex];
+    }
+
+    @Override
     public double getV() {
-        return v / getNominalV();
+        return vStorage[storageIndex] / getNominalV();
     }
 
     @Override
     public void setV(double v) {
-        this.v = v * getNominalV();
+        vStorage[storageIndex] = v * getNominalV();
     }
 
     @Override
@@ -579,12 +600,12 @@ public abstract class AbstractLfBus extends AbstractElement implements LfBus {
 
     @Override
     public double getAngle() {
-        return angle;
+        return angleStorage[storageIndex];
     }
 
     @Override
     public void setAngle(double angle) {
-        this.angle = angle;
+        angleStorage[storageIndex] = angle;
     }
 
     @Override

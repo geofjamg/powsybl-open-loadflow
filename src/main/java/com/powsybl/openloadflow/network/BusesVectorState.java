@@ -255,10 +255,13 @@ public final class BusesVectorState {
         for (int i : changed) {
             restoreBus(i);
         }
-        for (int i = 0; i < buses.length; i++) {
-            LfBus bus = buses[i];
-            bus.setAngle(angle[i]);
-            bus.setV(voltage[i]);
+        if (buses.length > 0) {
+            // bus numbers are positions in this state (checked by tracker)
+            LfNetwork network = buses[0].getNetwork();
+            for (int i = 0; i < buses.length; i++) {
+                network.setBusAngle(i, angle[i]);
+                network.setBusV(i, voltage[i]);
+            }
         }
     }
 

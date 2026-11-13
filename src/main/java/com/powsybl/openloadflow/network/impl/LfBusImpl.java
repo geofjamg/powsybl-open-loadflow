@@ -51,6 +51,11 @@ public class LfBusImpl extends AbstractLfBus {
 
     // Lazy initialiation
     private ViolationLocation violationLocation = null;
+    private boolean violationLocationComputed = false;
+
+    // cached, as getting them from the IIDM bus is expensive (bus view) and they are often needed (violations detection)
+    private String id;
+    private String voltageLevelId;
 
     protected LfBusImpl(Bus bus, LfNetwork network, double v, double angle, LfNetworkParameters parameters,
                         boolean participating) {
@@ -113,12 +118,18 @@ public class LfBusImpl extends AbstractLfBus {
 
     @Override
     public String getId() {
-        return getBus().getId();
+        if (id == null) {
+            id = getBus().getId();
+        }
+        return id;
     }
 
     @Override
     public String getVoltageLevelId() {
-        return getBus().getVoltageLevel().getId();
+        if (voltageLevelId == null) {
+            voltageLevelId = getBus().getVoltageLevel().getId();
+        }
+        return voltageLevelId;
     }
 
     @Override
@@ -145,9 +156,9 @@ public class LfBusImpl extends AbstractLfBus {
     public void updateState(LfNetworkStateUpdateParameters parameters) {
         var bus = getBus();
         if (!parameters.isDc()) {
-            bus.setV(Math.max(v, 0.0));
+            bus.setV(Math.max(getVkV(), 0.0));
         }
-        bus.setAngle(Math.toDegrees(angle));
+        bus.setAngle(Math.toDegrees(getAngle()));
 
         // update slack bus
         if (slack && parameters.isWriteSlackBus()) {
@@ -170,15 +181,15 @@ public class LfBusImpl extends AbstractLfBus {
         var bus = getBus();
         if (breakers) {
             if (bbsIds.isEmpty()) {
-                return List.of(new BusResult(getVoltageLevelId(), bus.getId(), v, Math.toDegrees(angle)));
+                return List.of(new BusResult(getVoltageLevelId(), bus.getId(), getVkV(), Math.toDegrees(getAngle())));
             } else {
                 return bbsIds.stream()
-                        .map(bbsId -> new BusResult(getVoltageLevelId(), bbsId, v, Math.toDegrees(angle)))
+                        .map(bbsId -> new BusResult(getVoltageLevelId(), bbsId, getVkV(), Math.toDegrees(getAngle())))
                         .collect(Collectors.toList());
             }
         } else {
             return bus.getVoltageLevel().getBusBreakerView().getBusesFromBusViewBusId(bus.getId())
-                    .stream().map(b -> new BusResult(getVoltageLevelId(), b.getId(), v, Math.toDegrees(angle))).collect(Collectors.toList());
+                    .stream().map(b -> new BusResult(getVoltageLevelId(), b.getId(), getVkV(), Math.toDegrees(getAngle()))).collect(Collectors.toList());
         }
     }
 
@@ -220,8 +231,9 @@ public class LfBusImpl extends AbstractLfBus {
     }
 
     public ViolationLocation getViolationLocation() {
-        TopologyKind topologyKind = getBus().getVoltageLevel().getTopologyKind();
-        if (violationLocation == null) {
+        if (!violationLocationComputed) {
+            TopologyKind topologyKind = getBus().getVoltageLevel().getTopologyKind();
+            violationLocationComputed = true;
             violationLocation = switch (topologyKind) {
                 case NODE_BREAKER -> {
                     List<Integer> nodes = getBus().getConnectedTerminalStream().map(t -> t.getNodeBreakerView().getNode()).toList();

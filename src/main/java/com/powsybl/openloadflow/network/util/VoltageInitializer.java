@@ -23,6 +23,21 @@ public interface VoltageInitializer {
 
     double getAngle(LfBus bus);
 
+    /**
+     * Same as {@link #getMagnitude(LfBus)} for bus number {@code busNum} of the network: an implementation can avoid
+     * accessing the bus (faster when initializing all buses).
+     */
+    default double getMagnitude(LfNetwork network, int busNum) {
+        return getMagnitude(network.getBus(busNum));
+    }
+
+    /**
+     * Same as {@link #getAngle(LfBus)} for bus number {@code busNum} of the network.
+     */
+    default double getAngle(LfNetwork network, int busNum) {
+        return getAngle(network.getBus(busNum));
+    }
+
     double getDcVoltage(LfDcBus dcBus);
 
 }

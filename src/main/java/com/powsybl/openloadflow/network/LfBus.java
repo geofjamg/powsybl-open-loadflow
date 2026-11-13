@@ -277,4 +277,14 @@ public interface LfBus extends LfElement {
     void addConverter(LfVoltageSourceConverter converter);
 
     int getNumSC();
+
+    /**
+     * Store voltage magnitude and angle in the given arrays (owned by the network, indexed by bus number) instead of
+     * in the bus itself. Current values are copied to the given arrays.
+     *
+     * @return false if not supported (voltages stay in the bus)
+     */
+    default boolean setVoltageStorage(double[] vStorage, double[] angleStorage, int storageIndex) {
+        return false;
+    }
 }

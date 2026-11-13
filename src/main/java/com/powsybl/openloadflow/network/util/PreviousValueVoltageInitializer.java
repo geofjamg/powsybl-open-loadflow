@@ -39,6 +39,18 @@ public class PreviousValueVoltageInitializer implements VoltageInitializer {
     }
 
     @Override
+    public double getMagnitude(LfNetwork network, int busNum) {
+        double v = network.getBusV(busNum);
+        return Double.isNaN(v) ? getMagnitude(network.getBus(busNum)) : v;
+    }
+
+    @Override
+    public double getAngle(LfNetwork network, int busNum) {
+        double angle = network.getBusAngle(busNum);
+        return Double.isNaN(angle) ? getAngle(network.getBus(busNum)) : angle;
+    }
+
+    @Override
     public double getMagnitude(LfBus bus) {
         double v = bus.getV();
         if (Double.isNaN(v)) {

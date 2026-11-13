@@ -30,11 +30,11 @@ public final class AcSolverUtil {
         for (Variable<AcVariableType> v : equationSystem.getIndex().getVariablesToFindSortedByElement()) {
             switch (v.getType()) {
                 case BUS_V:
-                    x[v.getRow()] = initializer.getMagnitude(network.getBus(v.getElementNum()));
+                    x[v.getRow()] = initializer.getMagnitude(network, v.getElementNum());
                     break;
 
                 case BUS_PHI:
-                    x[v.getRow()] = initializer.getAngle(network.getBus(v.getElementNum()));
+                    x[v.getRow()] = initializer.getAngle(network, v.getElementNum());
                     break;
 
                 case SHUNT_B:
@@ -93,11 +93,11 @@ public final class AcSolverUtil {
         for (Variable<AcVariableType> v : equationSystem.getIndex().getVariablesToFindSortedByElement()) {
             switch (v.getType()) {
                 case BUS_V:
-                    network.getBus(v.getElementNum()).setV(stateVector.get(v.getRow()));
+                    network.setBusV(v.getElementNum(), stateVector.get(v.getRow()));
                     break;
 
                 case BUS_PHI:
-                    network.getBus(v.getElementNum()).setAngle(stateVector.get(v.getRow()));
+                    network.setBusAngle(v.getElementNum(), stateVector.get(v.getRow()));
                     break;
 
                 case BUS_V_ZERO:

@@ -302,6 +302,7 @@ public class LfNetwork extends AbstractPropertyBag implements PropertyBag, LfEle
         stateChangeTracker.invalidate();
         bus.setNum(busesByIndex.size());
         busesByIndex.add(bus);
+        addBusVoltageStorage(bus);
         busesById.put(bus.getId(), bus);
         // Create a new LfSynchronousNetwork if this bus belongs to a synchronous component not stored yet
         if (!synchronousNetworks.stream().map(LfSynchronousNetwork::getNumSC).toList().contains(bus.getNumSC())) {
@@ -803,6 +804,64 @@ public class LfNetwork extends AbstractPropertyBag implements PropertyBag, LfEle
 
     public void removeListener(LfNetworkListener listener) {
         listeners.remove(listener);
+    }
+
+    // voltage magnitude (kV) and angle of buses, indexed by bus number (see LfBus.setVoltageStorage)
+    private double[] busVStorage = new double[16];
+    private double[] busAngleStorage = new double[16];
+    private double[] busNominalV = new double[16];
+    private boolean allBusVoltagesStored = true;
+
+    private void addBusVoltageStorage(LfBus bus) {
+        int num = bus.getNum();
+        if (num >= busVStorage.length) {
+            double[] newVStorage = Arrays.copyOf(busVStorage, busVStorage.length * 2);
+            double[] newAngleStorage = Arrays.copyOf(busAngleStorage, busAngleStorage.length * 2);
+            busNominalV = Arrays.copyOf(busNominalV, busNominalV.length * 2);
+            for (int i = 0; i < num; i++) {
+                busesByIndex.get(i).setVoltageStorage(newVStorage, newAngleStorage, i);
+            }
+            busVStorage = newVStorage;
+            busAngleStorage = newAngleStorage;
+        }
+        busNominalV[num] = bus.getNominalV();
+        allBusVoltagesStored &= bus.setVoltageStorage(busVStorage, busAngleStorage, num);
+    }
+
+    /**
+     * Same as {@code getBus(num).getV()} but without accessing the bus (faster when reading all buses).
+     */
+    public double getBusV(int num) {
+        return allBusVoltagesStored ? busVStorage[num] / busNominalV[num] : getBus(num).getV();
+    }
+
+    /**
+     * Same as {@code getBus(num).setV(v)} but without accessing the bus.
+     */
+    public void setBusV(int num, double v) {
+        if (allBusVoltagesStored) {
+            busVStorage[num] = v * busNominalV[num];
+        } else {
+            getBus(num).setV(v);
+        }
+    }
+
+    /**
+     * Same as {@code getBus(num).getAngle()} but without accessing the bus.
+     */
+    public double getBusAngle(int num) {
+        return allBusVoltagesStored ? busAngleStorage[num] : getBus(num).getAngle();
+    }
+
+    /**
+     * Same as {@code getBus(num).setAngle(angle)} but without accessing the bus.
+     */
+    public void setBusAngle(int num, double angle) {
+        if (allBusVoltagesStored) {
+            busAngleStorage[num] = angle;
+        } else {
+            getBus(num).setAngle(angle);
+        }
     }
 
     public StateChangeTracker getStateChangeTracker() {
