@@ -70,7 +70,14 @@ public class EquationTermArray<V extends Enum<V> & Quantity, E extends Enum<E> &
     private final TIntArrayList termElementNums = new TIntArrayList();
 
     // for each term number, activity status
-    private final TByteArrayList termActive = new TByteArrayList();
+    // gives access to the internal array, for fast loops (see getTermActiveArray)
+    private static final class ByteList extends TByteArrayList {
+        byte[] data() {
+            return _data;
+        }
+    }
+
+    private final ByteList termActive = new ByteList();
 
     // for each term number, list of derivative variables
     private final List<List<Derivative<V>>> termDerivatives = new ArrayList<>();
@@ -114,6 +121,14 @@ public class EquationTermArray<V extends Enum<V> & Quantity, E extends Enum<E> &
 
     public boolean isTermActive(int termNum) {
         return termActive.getQuick(termNum) == 1;
+    }
+
+    /**
+     * Activity status by term number (1 if active): direct access to the internal array for fast loops, only valid
+     * until next term addition.
+     */
+    byte[] getTermActiveArray() {
+        return termActive.data();
     }
 
     public int getEquationElementNum(int termNum) {

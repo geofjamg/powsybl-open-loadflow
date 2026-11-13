@@ -530,9 +530,10 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             int[] termNums = table.termNums();
             int[] termElementNums = table.termElementNums();
             int[] columns = table.columns();
+            byte[] termActive = termArray.getTermActiveArray();
             for (int k = 0; k < termNums.length; k++) {
                 // skip inactive terms
-                if (termArray.isTermActive(termNums[k])) {
+                if (termActive[termNums[k]] == 1) {
                     values[columns[k]] += termValues[termElementNums[k]];
                 }
             }

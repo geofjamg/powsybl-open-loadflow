@@ -89,9 +89,13 @@ class EquationDerivativeVector {
      */
     void addValues(EquationArray<?, ?> equationArray, int[] entryMatrixIndex, double[] matrixValues) {
         var termArrays = equationArray.getTermArrays();
+        byte[][] termActiveByArray = new byte[termArrays.size()][];
+        for (int t = 0; t < termActiveByArray.length; t++) {
+            termActiveByArray[t] = termArrays.get(t).getTermActiveArray();
+        }
         for (int i = 0; i < termNums.length; i++) {
             int matrixIndex = entryMatrixIndex[i];
-            if (matrixIndex != -1 && termArrays.get(termArrayNums[i]).isTermActive(termNums[i])) {
+            if (matrixIndex != -1 && termActiveByArray[termArrayNums[i]][termNums[i]] == 1) {
                 matrixValues[matrixIndex] += termDerValues[i][termElementNum[i]];
             }
         }
