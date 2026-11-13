@@ -143,6 +143,7 @@ public class AcNetworkVector extends AbstractLfNetworkListener
                 branchVector.v2Row[branchNum] = busVector.vRow[branchVector.bus2Num[branchNum]];
                 branchVector.ph2Row[branchNum] = busVector.phRow[branchVector.bus2Num[branchNum]];
             }
+            branchVector.updatePackedRows(branchNum);
         }
     }
 
@@ -186,54 +187,50 @@ public class AcNetworkVector extends AbstractLfNetworkListener
     }
 
     private void updateClosedBranch(int branchNum, double[] state, DoubleWrapper w) {
-        if (!branchVector.disabled[branchNum]) {
+        byte status = branchVector.status[branchNum];
+        if (status == 0) {
+            return; // disabled
+        }
+        // inputs are read from interleaved arrays (one contiguous block per branch)
+        double[] pp = branchVector.packedParams;
+        int pb = branchNum * AcBranchVector.P_STRIDE;
+        int[] pr = branchVector.packedRows;
+        int rb = branchNum * AcBranchVector.R_STRIDE;
 
-            branchVector.r1State[branchNum] = branchVector.r1Row[branchNum] != -1 ? state[branchVector.r1Row[branchNum]]
-                    : branchVector.r1[branchNum];
-            branchVector.a1State[branchNum] = branchVector.a1Row[branchNum] != -1 ? state[branchVector.a1Row[branchNum]]
-                    : branchVector.a1[branchNum];
+        int r1Row = pr[rb + AcBranchVector.R_R1];
+        int a1Row = pr[rb + AcBranchVector.R_A1];
+        double r1 = r1Row != -1 ? state[r1Row] : pp[pb + AcBranchVector.P_R1];
+        double a1 = a1Row != -1 ? state[a1Row] : pp[pb + AcBranchVector.P_A1];
+        branchVector.r1State[branchNum] = r1;
+        branchVector.a1State[branchNum] = a1;
 
-            if (isBranchConnectedSide1(branchNum) && isBranchConnectedSide2(branchNum)) {
-                double ph1 = state[branchVector.ph1Row[branchNum]];
-                double ph2 = state[branchVector.ph2Row[branchNum]];
-                double a1 = branchVector.a1State[branchNum];
+        if (status == 2) {
+            double ph1 = state[pr[rb + AcBranchVector.R_PH1]];
+            double ph2 = state[pr[rb + AcBranchVector.R_PH2]];
 
-                // theta1 = ksi + d and theta2 = ksi - d: only one sine/cosine computation is needed, combined
-                // with precomputed ksi sine and cosine
-                double d = ph2 - ph1 - a1 + A2;
-                double sinD = FastMath.sinAndCos(d, w);
-                double cosD = w.value;
-                double sinKsi = branchVector.sinKsi[branchNum];
-                double cosKsi = branchVector.cosKsi[branchNum];
-                double sinTheta1 = sinKsi * cosD + cosKsi * sinD;
-                double cosTheta1 = cosKsi * cosD - sinKsi * sinD;
-                double sinTheta2 = sinKsi * cosD - cosKsi * sinD;
-                double cosTheta2 = cosKsi * cosD + sinKsi * sinD;
+            // theta1 = ksi + d and theta2 = ksi - d: only one sine/cosine computation is needed, combined
+            // with precomputed ksi sine and cosine
+            double d = ph2 - ph1 - a1 + A2;
+            double sinD = FastMath.sinAndCos(d, w);
+            double cosD = w.value;
+            double sinKsi = pp[pb + AcBranchVector.P_SIN_KSI];
+            double cosKsi = pp[pb + AcBranchVector.P_COS_KSI];
+            double sinTheta1 = sinKsi * cosD + cosKsi * sinD;
+            double cosTheta1 = cosKsi * cosD - sinKsi * sinD;
+            double sinTheta2 = sinKsi * cosD - cosKsi * sinD;
+            double cosTheta2 = cosKsi * cosD + sinKsi * sinD;
 
-                double v1 = state[branchVector.v1Row[branchNum]];
-                double v2 = state[branchVector.v2Row[branchNum]];
-                double r1 = branchVector.r1State[branchNum];
+            double v1 = state[pr[rb + AcBranchVector.R_V1]];
+            double v2 = state[pr[rb + AcBranchVector.R_V2]];
 
-                // p1
-                updateP1AndDerivatives(branchNum, v1, r1, v2, sinTheta1, cosTheta1);
-
-                // q1
-                updateQ1AndDerivatives(branchNum, v1, r1, v2, sinTheta1, cosTheta1);
-
-                // i1 (computed lazily)
-                branchVector.v1State[branchNum] = v1;
-                branchVector.i1Valid[branchNum] = false;
-
-                // p2
-                updateP2AndDerivatives(branchNum, v1, r1, v2, sinTheta2, cosTheta2);
-
-                // q2
-                updateQ2AndDerivatives(branchNum, v1, r1, v2, sinTheta2, cosTheta2);
-
-                // i2 (computed lazily)
-                branchVector.v2State[branchNum] = v2;
-                branchVector.i2Valid[branchNum] = false;
-            }
+            updateP1AndDerivatives(branchNum, v1, r1, v2, sinTheta1, cosTheta1);
+            updateQ1AndDerivatives(branchNum, v1, r1, v2, sinTheta1, cosTheta1);
+            branchVector.v1State[branchNum] = v1;
+            branchVector.i1Valid[branchNum] = false;
+            updateP2AndDerivatives(branchNum, v1, r1, v2, sinTheta2, cosTheta2);
+            updateQ2AndDerivatives(branchNum, v1, r1, v2, sinTheta2, cosTheta2);
+            branchVector.v2State[branchNum] = v2;
+            branchVector.i2Valid[branchNum] = false;
         }
     }
 
@@ -328,6 +325,7 @@ public class AcNetworkVector extends AbstractLfNetworkListener
             busVector.disabled[element.getNum()] = disabled;
         } else if (element.getType() == ElementType.BRANCH) {
             branchVector.disabled[element.getNum()] = disabled;
+            branchVector.updateStatus(element.getNum());
             onBranchChange(element.getNum());
         }
     }
@@ -340,6 +338,7 @@ public class AcNetworkVector extends AbstractLfNetworkListener
         } else {
             branchVector.connected2[branch.getNum()] = connected;
         }
+        branchVector.updateStatus(branch.getNum());
     }
 
     @Override
@@ -360,6 +359,7 @@ public class AcNetworkVector extends AbstractLfNetworkListener
         branchVector.g2[branch.getNum()] = piModel.getG2();
         branchVector.a1[branch.getNum()] = piModel.getA1();
         branchVector.r1[branch.getNum()] = piModel.getR1();
+        branchVector.updatePackedParams(branch.getNum());
     }
 
     @Override
@@ -417,55 +417,57 @@ public class AcNetworkVector extends AbstractLfNetworkListener
     }
 
     private void updateP1AndDerivatives(int branchNum, double v1, double r1, double v2, double sinTheta1, double cosTheta1) {
+        double[] pp = branchVector.packedParams;
+        int pb = branchNum * AcBranchVector.P_STRIDE;
         branchVector.p1[branchNum] = ClosedBranchSide1ActiveFlowEquationTerm.p1(
-            branchVector.y[branchNum],
-            branchVector.sinKsi[branchNum],
-            branchVector.g1[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_SIN_KSI],
+            pp[pb + AcBranchVector.P_G1],
             v1,
             r1,
             v2,
             sinTheta1);
 
         branchVector.dp1dv1[branchNum] = ClosedBranchSide1ActiveFlowEquationTerm.dp1dv1(
-            branchVector.y[branchNum],
-            branchVector.sinKsi[branchNum],
-            branchVector.g1[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_SIN_KSI],
+            pp[pb + AcBranchVector.P_G1],
             v1,
             r1,
             v2,
             sinTheta1);
 
         branchVector.dp1dv2[branchNum] = ClosedBranchSide1ActiveFlowEquationTerm.dp1dv2(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             sinTheta1);
 
         branchVector.dp1dph1[branchNum] = ClosedBranchSide1ActiveFlowEquationTerm.dp1dph1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             cosTheta1);
 
         branchVector.dp1dph2[branchNum] = ClosedBranchSide1ActiveFlowEquationTerm.dp1dph2(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             cosTheta1);
 
         branchVector.dp1da1[branchNum] = ClosedBranchSide1ActiveFlowEquationTerm.dp1da1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             cosTheta1);
 
         branchVector.dp1dr1[branchNum] = ClosedBranchSide1ActiveFlowEquationTerm.dp1dr1(
-            branchVector.y[branchNum],
-            branchVector.sinKsi[branchNum],
-            branchVector.g1[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_SIN_KSI],
+            pp[pb + AcBranchVector.P_G1],
             v1,
             r1,
             v2,
@@ -473,54 +475,56 @@ public class AcNetworkVector extends AbstractLfNetworkListener
     }
 
     private void updateQ1AndDerivatives(int branchNum, double v1, double r1, double v2, double sinTheta1, double cosTheta1) {
+        double[] pp = branchVector.packedParams;
+        int pb = branchNum * AcBranchVector.P_STRIDE;
         branchVector.q1[branchNum] = ClosedBranchSide1ReactiveFlowEquationTerm.q1(
-            branchVector.y[branchNum],
-            branchVector.cosKsi[branchNum],
-            branchVector.b1[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_COS_KSI],
+            pp[pb + AcBranchVector.P_B1],
             v1,
             r1,
             v2,
             cosTheta1);
         branchVector.dq1dv1[branchNum] = ClosedBranchSide1ReactiveFlowEquationTerm.dq1dv1(
-            branchVector.y[branchNum],
-            branchVector.cosKsi[branchNum],
-            branchVector.b1[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_COS_KSI],
+            pp[pb + AcBranchVector.P_B1],
             v1,
             r1,
             v2,
             cosTheta1);
 
         branchVector.dq1dv2[branchNum] = ClosedBranchSide1ReactiveFlowEquationTerm.dq1dv2(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             cosTheta1);
 
         branchVector.dq1dph1[branchNum] = ClosedBranchSide1ReactiveFlowEquationTerm.dq1dph1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             sinTheta1);
 
         branchVector.dq1dph2[branchNum] = ClosedBranchSide1ReactiveFlowEquationTerm.dq1dph2(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             sinTheta1);
 
         branchVector.dq1da1[branchNum] = ClosedBranchSide1ReactiveFlowEquationTerm.dq1da1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             sinTheta1);
 
         branchVector.dq1dr1[branchNum] = ClosedBranchSide1ReactiveFlowEquationTerm.dq1dr1(
-            branchVector.y[branchNum],
-            branchVector.cosKsi[branchNum],
-            branchVector.b1[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_COS_KSI],
+            pp[pb + AcBranchVector.P_B1],
             v1,
             r1,
             v2,
@@ -528,106 +532,110 @@ public class AcNetworkVector extends AbstractLfNetworkListener
     }
 
     private void updateP2AndDerivatives(int branchNum, double v1, double r1, double v2, double sinTheta2, double cosTheta2) {
+        double[] pp = branchVector.packedParams;
+        int pb = branchNum * AcBranchVector.P_STRIDE;
         branchVector.p2[branchNum] = ClosedBranchSide2ActiveFlowEquationTerm.p2(
-            branchVector.y[branchNum],
-            branchVector.sinKsi[branchNum],
-            branchVector.g2[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_SIN_KSI],
+            pp[pb + AcBranchVector.P_G2],
             v1,
             r1,
             v2,
             sinTheta2);
 
         branchVector.dp2dv1[branchNum] = ClosedBranchSide2ActiveFlowEquationTerm.dp2dv1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             r1,
             v2,
             sinTheta2);
 
         branchVector.dp2dv2[branchNum] = ClosedBranchSide2ActiveFlowEquationTerm.dp2dv2(
-            branchVector.y[branchNum],
-            branchVector.sinKsi[branchNum],
-            branchVector.g2[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_SIN_KSI],
+            pp[pb + AcBranchVector.P_G2],
             v1,
             r1,
             v2,
             sinTheta2);
 
         branchVector.dp2dph1[branchNum] = ClosedBranchSide2ActiveFlowEquationTerm.dp2dph1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             cosTheta2);
 
         branchVector.dp2dph2[branchNum] = ClosedBranchSide2ActiveFlowEquationTerm.dp2dph2(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             cosTheta2);
 
         branchVector.dp2da1[branchNum] = ClosedBranchSide2ActiveFlowEquationTerm.dp2da1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             cosTheta2);
 
         branchVector.dp2dr1[branchNum] = ClosedBranchSide2ActiveFlowEquationTerm.dp2dr1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             v2,
             sinTheta2);
     }
 
     private void updateQ2AndDerivatives(int branchNum, double v1, double r1, double v2, double sinTheta2, double cosTheta2) {
+        double[] pp = branchVector.packedParams;
+        int pb = branchNum * AcBranchVector.P_STRIDE;
         branchVector.q2[branchNum] = ClosedBranchSide2ReactiveFlowEquationTerm.q2(
-            branchVector.y[branchNum],
-            branchVector.cosKsi[branchNum],
-            branchVector.b2[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_COS_KSI],
+            pp[pb + AcBranchVector.P_B2],
             v1,
             r1,
             v2,
             cosTheta2);
 
         branchVector.dq2dv1[branchNum] = ClosedBranchSide2ReactiveFlowEquationTerm.dq2dv1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             r1,
             v2,
             cosTheta2);
 
         branchVector.dq2dv2[branchNum] = ClosedBranchSide2ReactiveFlowEquationTerm.dq2dv2(
-            branchVector.y[branchNum],
-            branchVector.cosKsi[branchNum],
-            branchVector.b2[branchNum],
+            pp[pb + AcBranchVector.P_Y],
+            pp[pb + AcBranchVector.P_COS_KSI],
+            pp[pb + AcBranchVector.P_B2],
             v1,
             r1,
             v2,
             cosTheta2);
 
         branchVector.dq2dph1[branchNum] = ClosedBranchSide2ReactiveFlowEquationTerm.dq2dph1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             sinTheta2);
 
         branchVector.dq2dph2[branchNum] = ClosedBranchSide2ReactiveFlowEquationTerm.dq2dph2(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             sinTheta2);
 
         branchVector.dq2da1[branchNum] = ClosedBranchSide2ReactiveFlowEquationTerm.dq2da1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             r1,
             v2,
             sinTheta2);
 
         branchVector.dq2dr1[branchNum] = ClosedBranchSide2ReactiveFlowEquationTerm.dq2dr1(
-            branchVector.y[branchNum],
+            pp[pb + AcBranchVector.P_Y],
             v1,
             v2,
             cosTheta2);

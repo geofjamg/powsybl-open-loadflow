@@ -197,10 +197,78 @@ public class AcBranchVector {
             deriveA1[i] = AcEquationSystemCreator.isDeriveA1(branch, creationParameters);
             deriveR1[i] = AcEquationSystemCreator.isDeriveR1(branch);
         }
+
+        packedParams = new double[size * P_STRIDE];
+        packedRows = new int[size * R_STRIDE];
+        status = new byte[size];
+        for (int i = 0; i < size; i++) {
+            updatePackedParams(i);
+            updatePackedRows(i);
+            updateStatus(i);
+        }
     }
 
     public int getSize() {
         return disabled.length;
+    }
+
+    // Interleaved copy of the inputs of the flows computation (constant parameters and variable rows), so that the
+    // hot loop of AcNetworkVector reads one contiguous block per branch instead of about twenty separate arrays.
+    // Kept in sync with the separate arrays (which remain the reference for other users) by the update methods below.
+    static final int P_Y = 0;
+    static final int P_SIN_KSI = 1;
+    static final int P_COS_KSI = 2;
+    static final int P_G1 = 3;
+    static final int P_B1 = 4;
+    static final int P_G2 = 5;
+    static final int P_B2 = 6;
+    static final int P_R1 = 7;
+    static final int P_A1 = 8;
+    static final int P_STRIDE = 9;
+
+    static final int R_PH1 = 0;
+    static final int R_PH2 = 1;
+    static final int R_V1 = 2;
+    static final int R_V2 = 3;
+    static final int R_A1 = 4;
+    static final int R_R1 = 5;
+    static final int R_STRIDE = 6;
+
+    final double[] packedParams;
+    final int[] packedRows;
+    // 0: disabled, 1: enabled but not connected on both sides, 2: enabled and connected on both sides (closed)
+    final byte[] status;
+
+    void updatePackedParams(int i) {
+        int b = i * P_STRIDE;
+        packedParams[b + P_Y] = y[i];
+        packedParams[b + P_SIN_KSI] = sinKsi[i];
+        packedParams[b + P_COS_KSI] = cosKsi[i];
+        packedParams[b + P_G1] = g1[i];
+        packedParams[b + P_B1] = b1[i];
+        packedParams[b + P_G2] = g2[i];
+        packedParams[b + P_B2] = b2[i];
+        packedParams[b + P_R1] = r1[i];
+        packedParams[b + P_A1] = a1[i];
+    }
+
+    void updatePackedRows(int i) {
+        int b = i * R_STRIDE;
+        packedRows[b + R_PH1] = ph1Row[i];
+        packedRows[b + R_PH2] = ph2Row[i];
+        packedRows[b + R_V1] = v1Row[i];
+        packedRows[b + R_V2] = v2Row[i];
+        packedRows[b + R_A1] = a1Row[i];
+        packedRows[b + R_R1] = r1Row[i];
+    }
+
+    void updateStatus(int i) {
+        if (disabled[i]) {
+            status[i] = 0;
+        } else {
+            boolean closed = bus1Num[i] != -1 && connected1[i] && bus2Num[i] != -1 && connected2[i];
+            status[i] = (byte) (closed ? 2 : 1);
+        }
     }
 
     public Evaluable getP1(int branchNum) {
