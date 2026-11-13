@@ -364,6 +364,13 @@ et recopie de l'état ≈ 3,8 s, petits contrôles ≈ 1,8 s.
 
 Tests : 1489, 0 échec. Résultats identiques en NR pur et en configuration par défaut.
 
+### Gains Java restants
+
+| Commit | Modification | Effet mesuré |
+|---|---|---|
+| `322440b` | **Données de branche entrelacées.** Les paramètres constants et les numéros de lignes des variables de chaque branche sont aussi stockés dans deux tableaux entrelacés (un bloc contigu par branche), tenus à jour avec les tableaux séparés, qui restent la référence. La boucle de calcul des transits lit deux flux mémoire au lieu d'une vingtaine. | ≈ −10 % sur le calcul des transits (645 → 580 µs par appel, chronométré), ≈ −1 s au total |
+| — | **Jacobienne émise dans l'ordre de la matrice LU : abandonné.** Construire la jacobienne avec les lignes triées dans chaque colonne (deux passes dans `initDer`) permet une copie en bloc vers la LU, avec des résultats identiques. Mais les dérivées sont alors écrites de façon dispersée dans la jacobienne, au lieu de l'être dans l'ordre de stockage puis dispersées vers la LU : la dispersion change seulement de place. Mesuré légèrement plus lent, annulé. | — |
+
 ## Reproduire
 
 Bibliothèque native améliorée :
@@ -417,3 +424,4 @@ Configurations :
 | `16f3dd2` | Transits du point de départ réutilisés (état identique) |
 | `152470c` | Pré-filtre vectorisé de la détection des violations |
 | `7258e33` | Variables en tableau plat, compensateurs avec automate en cache |
+| `322440b` | Données de branche entrelacées pour le calcul des transits |
