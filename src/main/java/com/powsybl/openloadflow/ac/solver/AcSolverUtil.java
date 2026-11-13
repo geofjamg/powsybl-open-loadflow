@@ -25,8 +25,9 @@ public final class AcSolverUtil {
     }
 
     public static void initStateVector(LfNetwork network, EquationSystem<AcVariableType, AcEquationType> equationSystem, VoltageInitializer initializer) {
+        // variables are visited in element order (network elements accessed sequentially in memory)
         double[] x = new double[equationSystem.getIndex().getSortedVariablesToFind().size()];
-        for (Variable<AcVariableType> v : equationSystem.getIndex().getSortedVariablesToFind()) {
+        for (Variable<AcVariableType> v : equationSystem.getIndex().getVariablesToFindSortedByElement()) {
             switch (v.getType()) {
                 case BUS_V:
                     x[v.getRow()] = initializer.getMagnitude(network.getBus(v.getElementNum()));
@@ -89,7 +90,7 @@ public final class AcSolverUtil {
     public static void updateNetwork(LfNetwork network, EquationSystem<AcVariableType, AcEquationType> equationSystem) {
         // update state variable
         StateVector stateVector = equationSystem.getStateVector();
-        for (Variable<AcVariableType> v : equationSystem.getIndex().getSortedVariablesToFind()) {
+        for (Variable<AcVariableType> v : equationSystem.getIndex().getVariablesToFindSortedByElement()) {
             switch (v.getType()) {
                 case BUS_V:
                     network.getBus(v.getElementNum()).setV(stateVector.get(v.getRow()));

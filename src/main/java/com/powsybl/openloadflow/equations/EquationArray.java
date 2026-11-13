@@ -77,6 +77,17 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
     private TIntArrayList additionalEvalElementNums;
     private List<SingleEquationTerm<V, E>> additionalEvalTerms;
 
+    // additional single terms are often mostly inactive (for instance open branch terms of all branches that can be
+    // disconnected by a contingency): only active ones are kept in these compact tables, rebuilt on term activation
+    // change, so that evaluation and derivative loops do not visit inactive terms at each iteration
+    private boolean activeAdditionalTermsValid = false;
+    private final TIntArrayList activeEvalIndexes = new TIntArrayList(); // indexes in additionalEval* lists
+    private boolean[] evalIndexListed;
+    private IdentityHashMap<SingleEquationTerm<V, E>, TIntArrayList> evalIndexesByTerm;
+    private final TIntArrayList activeDerEntries = new TIntArrayList(); // indexes in additionalDer* lists
+    private boolean[] derEntryListed;
+    private IdentityHashMap<SingleEquationTerm<V, E>, TIntArrayList> derEntriesByTerm;
+
     private List<FlatEvalTable> getFlatEvalTables() {
         if (flatEvalTables == null) {
             int[] columns = getElementNumToColumn();
@@ -527,6 +538,7 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             }
         }
         if (additionalEvalTerms == null) {
+            activeAdditionalTermsValid = false;
             additionalEvalElementNums = new TIntArrayList();
             List<SingleEquationTerm<V, E>> evalTerms = new ArrayList<>();
             for (Map.Entry<Integer, AdditionalSingleTermsByEquation> singleTermsEntry : singleTermsByEquationElementNum.entrySet()) {
@@ -537,16 +549,100 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
             }
             additionalEvalTerms = evalTerms;
         }
+        updateActiveAdditionalTerms();
         int[] elementNumToColumn = getElementNumToColumn();
-        for (int k = 0; k < additionalEvalTerms.size(); k++) {
-            int elementNum = additionalEvalElementNums.getQuick(k);
+        for (int k = 0; k < activeEvalIndexes.size(); k++) {
+            int index = activeEvalIndexes.getQuick(k);
+            int elementNum = additionalEvalElementNums.getQuick(index);
             if (elementActive[elementNum]) {
-                SingleEquationTerm<V, E> singleTerm = additionalEvalTerms.get(k);
+                SingleEquationTerm<V, E> singleTerm = additionalEvalTerms.get(index);
                 if (singleTerm.isActive()) {
                     values[elementNumToColumn[elementNum]] += singleTerm.eval();
                 }
             }
         }
+    }
+
+    /**
+     * Called when an additional single term of this equation array is added or activated. An activated term is
+     * appended to active terms tables (no full rebuild). A deactivated term can stay in the tables as activity is
+     * checked again at evaluation; tables are compacted at next full rebuild.
+     */
+    void onAdditionalTermChange(SingleEquationTerm<V, E> term, EquationTermEventType eventType) {
+        if (eventType != EquationTermEventType.EQUATION_TERM_ACTIVATED || !activeAdditionalTermsValid) {
+            activeAdditionalTermsValid = false;
+            return;
+        }
+        TIntArrayList evalIndexes = evalIndexesByTerm.get(term);
+        if (evalIndexes == null) {
+            // unknown term (tables not up to date)
+            activeAdditionalTermsValid = false;
+            return;
+        }
+        for (int i = 0; i < evalIndexes.size(); i++) {
+            int index = evalIndexes.getQuick(i);
+            if (!evalIndexListed[index]) {
+                evalIndexListed[index] = true;
+                insertSorted(activeEvalIndexes, index);
+            }
+        }
+        TIntArrayList derEntries = derEntriesByTerm.get(term);
+        if (derEntries != null) {
+            for (int i = 0; i < derEntries.size(); i++) {
+                int entry = derEntries.getQuick(i);
+                if (!derEntryListed[entry]) {
+                    derEntryListed[entry] = true;
+                    insertSorted(activeDerEntries, entry);
+                }
+            }
+        }
+        // too many inactive terms accumulated: full rebuild to compact the tables
+        if (activeEvalIndexes.size() > 2 * activeTermsAtLastRebuild + 64) {
+            activeAdditionalTermsValid = false;
+        }
+    }
+
+    private int activeTermsAtLastRebuild = 0;
+
+    /**
+     * Keep tables sorted so that evaluation order (and so floating point results) does not depend on the history of
+     * activations.
+     */
+    private static void insertSorted(TIntArrayList list, int value) {
+        int i = list.binarySearch(value);
+        list.insert(i >= 0 ? i : -i - 1, value);
+    }
+
+    private void updateActiveAdditionalTerms() {
+        if (activeAdditionalTermsValid) {
+            return;
+        }
+        activeEvalIndexes.resetQuick();
+        evalIndexesByTerm = new IdentityHashMap<>();
+        int evalCount = additionalEvalTerms != null ? additionalEvalTerms.size() : 0;
+        evalIndexListed = new boolean[evalCount];
+        for (int index = 0; index < evalCount; index++) {
+            SingleEquationTerm<V, E> term = additionalEvalTerms.get(index);
+            evalIndexesByTerm.computeIfAbsent(term, t -> new TIntArrayList(1)).add(index);
+            if (term.isActive()) {
+                evalIndexListed[index] = true;
+                activeEvalIndexes.add(index);
+            }
+        }
+        activeDerEntries.resetQuick();
+        derEntriesByTerm = new IdentityHashMap<>();
+        derEntryListed = new boolean[additionalDerTerms.size()];
+        for (int entry = 0; entry < additionalDerTerms.size(); entry++) {
+            for (var term : additionalDerTerms.get(entry)) {
+                derEntriesByTerm.computeIfAbsent(term, t -> new TIntArrayList(1)).add(entry);
+                if (term.isActive() && !derEntryListed[entry]) {
+                    derEntryListed[entry] = true;
+                    activeDerEntries.add(entry);
+                }
+            }
+        }
+        activeTermsAtLastRebuild = activeEvalIndexes.size();
+        activeAdditionalTermsValid = true;
     }
 
     public interface DerHandler {
@@ -612,6 +708,7 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
         additionalDerVariables.clear();
         additionalDerTerms.clear();
         additionalDerMatrixIndexes.clear();
+        activeAdditionalTermsValid = false;
 
         // calculate all derivative values
         // process column by column so equation by equation of the array
@@ -743,7 +840,9 @@ public class EquationArray<V extends Enum<V> & Quantity, E extends Enum<E> & Qua
      */
     void derValues(double[] matrixValues) {
         equationDerivativeVector.addValues(this, entryMatrixIndex, matrixValues);
-        for (int k = 0; k < additionalDerElementNums.size(); k++) {
+        updateActiveAdditionalTerms();
+        for (int i = 0; i < activeDerEntries.size(); i++) {
+            int k = activeDerEntries.getQuick(i);
             if (elementActive[additionalDerElementNums.getQuick(k)]) {
                 Variable<V> v = additionalDerVariables.get(k);
                 double d = 0;

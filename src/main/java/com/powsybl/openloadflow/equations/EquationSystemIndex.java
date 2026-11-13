@@ -795,6 +795,25 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
         return sortedVariablesToFind;
     }
 
+    private List<Variable<V>> variablesByElementSource;
+    private List<Variable<V>> variablesByElement;
+
+    /**
+     * Variables to find sorted by element number (and then type), instead of row order. Iterating in this order to
+     * read or write network elements accesses them sequentially in memory, which is much faster for large networks
+     * than the row order (that is aligned with the equations).
+     */
+    public List<Variable<V>> getVariablesToFindSortedByElement() {
+        update();
+        if (variablesByElementSource != sortedVariablesToFind) {
+            List<Variable<V>> variables = new ArrayList<>(sortedVariablesToFind);
+            Collections.sort(variables);
+            variablesByElement = Collections.unmodifiableList(variables);
+            variablesByElementSource = sortedVariablesToFind;
+        }
+        return variablesByElement;
+    }
+
     public int getColumnCount() {
         update();
         return columnCount;

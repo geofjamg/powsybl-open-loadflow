@@ -300,6 +300,17 @@ public class EquationSystem<V extends Enum<V> & Quantity, E extends Enum<E> & Qu
         Objects.requireNonNull(term);
         Objects.requireNonNull(eventType);
         listeners.forEach(listener -> listener.onEquationTermChange(term, eventType));
+        // additional single term of an equation array: active terms table has to be updated (a deactivated term
+        // can stay in the table as activity is checked again at evaluation)
+        if (eventType != EquationTermEventType.EQUATION_TERM_DEACTIVATED) {
+            Equation<V, E> equation = term.getEquation();
+            if (equation != null && !(equation instanceof SingleEquation)) {
+                EquationArray<V, E> equationArray = equationArrays.get(equation.getType());
+                if (equationArray != null) {
+                    equationArray.onAdditionalTermChange(term, eventType);
+                }
+            }
+        }
     }
 
     void notifyEquationTermArrayChange(EquationTermArray<V, E> equationTermArray, int termNum, EquationTermEventType eventType) {
