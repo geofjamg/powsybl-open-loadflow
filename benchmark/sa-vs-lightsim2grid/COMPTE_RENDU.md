@@ -11,21 +11,24 @@ lightsim2grid (LS2G). Le diagnostic de départ est dans [RESUME.md](RESUME.md) e
 Le cas testé est `case6515rte` en N-1 sur les 7422 lignes, dont 2162 créent un îlot, en NR pur
 (slack unique, sans limites réactives) et sur **1 thread**.
 
-Toutes les variantes ont été exécutées **deux fois, en alternance**, sur la même machine. Le bruit
-est de ±15 % d'un créneau à l'autre ; le tableau donne le meilleur des deux tours, puis le premier.
+Toutes les variantes ont été exécutées **en alternance**, sur la même machine. Le bruit est de
+±15 % d'un créneau à l'autre ; le tableau donne le meilleur des tours, puis le premier entre
+parenthèses.
 
 | Variante | Temps | Par contingence | Résultats |
 |---|---|---|---|
 | OLF d'origine (`16838da`) + powsybl-math-native 1.5.0 officiel | 317,3 s (318,1) | 42,8 ms | référence |
 | OLF branche + powsybl-math-native 1.5.0 officiel | 78,4 s (91,4) | 10,6 ms | identiques ¹ |
 | OLF branche + powsybl-math-native amélioré (`-Drgrowth=-1e-12`) | 67,8 s (78,5) | 9,1 ms | identiques ¹ |
-| **idem + restauration d'état incrémentale** (`42d48c3`), voir plus bas | **64,5 s** | **8,7 ms** | identiques ¹ |
+| **idem + restauration d'état incrémentale** (`42d48c3`) ² | **64,5 s** (69,1) | **8,7 ms** | identiques ¹ |
 | lightsim2grid 1.3.0, sans violations | 43,4 s (48,7) | 5,8 ms | |
 | lightsim2grid 1.3.0, avec violations (2,8 M, non filtrées) | 46,6 s (47,3) | 6,3 ms | |
 
 ¹ Mêmes statuts (7420 convergées, 2 en limite d'itérations) et mêmes 1 021 140 violations.
+² Mesuré dans un créneau ultérieur, en A/B sur 3 tours contre la version précédente (75,2 → 66,6 s
+en moyenne, soit −11 %) ; voir la section « Restauration d'état incrémentale ».
 
-- Le gain total est **×4,7** par rapport à l'origine.
+- Le gain total est **×4,9** par rapport à l'origine.
 - **L'écart avec lightsim2grid passe de ×6,8 à ×1,4** à travail comparable (violations comprises).
 - **La parité n'est pas atteinte** : l'écart restant est entièrement côté Java (voir plus bas).
 
@@ -61,24 +64,28 @@ du classpath.
 - Sur la jacobienne de ce cas, une refactorisation coûte 1,58 ms dans OLF en mode `rcond`, contre
   2,06 ms avec la bibliothèque officielle. En banc C, `klu_refactor` seul coûte 1,4 ms.
 
-### D'où vient l'écart restant (≈ 9,1 contre ≈ 6,3 ms par contingence)
+### D'où vient l'écart restant (≈ 8,7 contre ≈ 6,3 ms par contingence)
 
-- **KLU.** Il coûte maintenant ≈ 2,4 ms par contingence dans OLF (1,31 refactorisation, plus les
-  résolutions). Lightsim2grid en fait ≈ 2 par contingence, pour ≈ 2,8 ms : **KLU n'est plus en
-  cause**.
-- **Java.** Il représente ≈ 6,7 ms par contingence, contre ≈ 3,5 ms pour l'équivalent C++ de
-  lightsim2grid :
-  - restauration de l'état réseau ≈ 1,5 ms ;
-  - remplissage de la jacobienne ≈ 1,2 ms ;
-  - initialisation de l'état et des transits ≈ 1,0 ms ;
-  - mismatch ≈ 1,3 ms ;
-  - mise à jour des transits ≈ 0,8 ms ;
-  - violations ≈ 0,9 ms.
+Profil JFR de la dernière version (NR pur, 1 thread, bibliothèque native améliorée) :
 
-  En place, ces opérations coûtent 2 à 5 fois leur coût en micro-benchmark (défauts de cache sur
-  des structures objet volumineuses). Combler cet écart demanderait de passer à des structures de
-  données plates (tableaux) pour l'état réseau et sa restauration, et à un calcul matriciel des
-  transits sur Ybus : c'est une refonte, pas une optimisation locale.
+- **KLU (natif)** : ≈ 2,8 ms par contingence, autant que lightsim2grid. **KLU n'est plus en
+  cause.**
+- **Java** : tout le reste de l'écart. Sa répartition :
+
+| Poste Java | Part du temps Java |
+|---|---|
+| Évaluation du vecteur des écarts (mismatch) | 24 % |
+| Remplissage des valeurs de la jacobienne | 19,5 % |
+| Transits par branche à partir de l'état (`AcNetworkVector`) | 19,5 % |
+| Divers Newton-Raphson (initialisation de l'état, normes, recopie dans le réseau) | 15 % |
+| Détection des violations | 13,5 % |
+| Contrôle d'état non réaliste | 2,7 % |
+| Boucles externes (contrôle `isNeeded`) | 2,2 % |
+| **Restauration de l'état réseau** | **0,8 %** (≈ 15 % avant la restauration incrémentale) |
+
+Les trois premiers postes (63 %) relisent chacun les mêmes données de branche (tensions, sinus,
+cosinus) à chaque itération, là où lightsim2grid fait un seul produit creux avec Ybus en C++. Les
+pistes pour combler l'écart sont dans la section « Ce qui reste, et comment aller plus loin ».
 
 ## Résultats de l'étape précédente (bibliothèque native officielle)
 
@@ -105,8 +112,9 @@ après. Le bruit de la machine est de l'ordre de ±10 à 15 %.
 6 fois au départ. Le reste de l'écart est expliqué plus bas. Une partie ne dépend pas de ce dépôt
 (bibliothèque native KLU de powsybl).
 
-## Où va le temps maintenant
+## Répartition du temps à l'étape précédente
 
+Ce tableau date de l'étape précédente (bibliothèque native officielle, restauration complète).
 Mesures chronométrées en NR pur sur 1 thread, en moyenne par contingence :
 
 | Poste | Avant | Après | LS2G |
@@ -162,8 +170,9 @@ Ce mode n'est actif qu'en analyse de sécurité AC, avec le solveur Newton-Raphs
 Divers :
 
 - **Restauration de l'état :**
-  - les générateurs sont restaurés depuis des tableaux ;
-  - le statut des charges est versionné : il n'est réécrit que s'il a changé.
+  - l'état est stocké dans des tableaux plats (voir « Essai : sauvegarde d'état vectorisée ») ;
+  - le statut des charges est versionné : il n'est réécrit que s'il a changé ;
+  - la restauration est incrémentale (voir « Restauration d'état incrémentale »).
 - **Contrôles moins coûteux :**
   - `MonitoringVoltageOuterLoop.isNeeded` fait d'abord un pré-test bon marché ;
   - le contrôle d'état non réaliste ne cherche le bus que si la tension est hors plage.
@@ -187,30 +196,48 @@ Deux attendus figés ont été mis à jour :
 - `EquationArrayTest.testSparseReproducibility` : nouvelle numérotation, dont la reproductibilité a
   été vérifiée.
 
-## Ce qui reste, et pourquoi
+## Ce qui reste, et comment aller plus loin
 
-1. **KLU via powsybl-math-native : ≈ 3,2 ms par contingence, contre ≈ 3 ms pour LS2G avec plus
-   d'itérations.** Chaque `update` de powsybl-math-native :
-   - fait systématiquement un `klu_rgrowth`, soit ≈ 0,35 ms ;
-   - copie les tableaux de la matrice à l'entrée et à la sortie de JNI
-     (`Get/Release*ArrayElements` en mode 0), soit ≈ 0,3 ms.
+**Déjà traité depuis la première version de ce compte rendu :**
 
-   Une refactorisation coûte ainsi 2,15 ms, contre 1,35 ms dans LS2G. Corriger cela demande une
-   évolution de **powsybl-math-native**, hors de ce dépôt : `rgrowth` optionnel,
-   `GetPrimitiveArrayCritical` et `JNI_ABORT` pour les tableaux en lecture seule.
-2. **Restauration de l'état (≈ 1,6 ms).** OLF restaure tous les bus et branches à chaque
-   contingence. Une restauration incrémentale demanderait que toute modification d'état émette un
-   événement, ce qui n'est pas le cas aujourd'hui (prises, gel de Q, participation…). Je ne l'ai
-   pas faite, à cause du risque de restauration incomplète.
-3. **Calculs Java contre C++.** Les transits et dérivées sont calculés par branche, en Java
-   (≈ 2 ms par contingence), là où LS2G fait des produits creux Ybus en C++.
-4. **Montée en charge multi-thread.** Avec 4 threads, OLF ralentit d'un facteur ≈ 2 par thread,
-   contre ≈ 1,2 pour LS2G. Le GC est négligeable (0,65 s) ; la cause est la contention mémoire,
-   avec des structures objet bien plus volumineuses.
-5. **Configuration par défaut.** Les basculements PV↔PQ de la boucle des limites réactives
-   changent encore la structure : l'équation de consigne V est remplacée par l'équation Q. Une
-   extension du mode fantôme, avec « échange » d'équation sur la même variable diagonale,
-   permettrait de l'éviter.
+- **Surcoût de powsybl-math-native** (`klu_rgrowth` systématique, copies JNI) : corrigé par le
+  patch de `math-native/`. Il reste à le faire intégrer dans powsybl-math-native, puis à activer le
+  mode `rcond` par défaut dans OLF.
+- **Restauration de l'état réseau** : elle est maintenant incrémentale (≈ 0,8 % du temps Java,
+  contre ≈ 15 %).
+
+**Pistes pour se rapprocher de lightsim2grid, par gain attendu :**
+
+1. **Un seul passage par branche et par itération (≈ −10 à −15 s, le plus gros levier).** Un noyau
+   unique calculerait pour chaque branche P, Q et leurs dérivées en une fois, et les ajouterait
+   directement dans le vecteur des écarts et dans les valeurs de la jacobienne, aux positions déjà
+   connues. On supprimerait l'étape intermédiaire `EquationArray`. Ces trois postes font 63 % du
+   temps Java.
+2. **Garder l'état en tableaux entre deux contingences (≈ −4 à −6 s).** Sauvegarder et restaurer
+   directement le vecteur d'état, au lieu de passer par les objets bus à chaque initialisation et
+   à chaque fin de calcul ; ne recopier dans les objets que ce qui sert aux résultats.
+3. **Violations calculées à partir des tableaux (≈ −4 s).** Lire les transits dans
+   `AcBranchVector` sans passer par les objets branche, avec un premier filtre sur le plus petit
+   seuil avant de construire le moindre objet de résultat.
+4. **Moins de travail par itération (quelques secondes).** Calculer les normes et le critère d'arrêt
+   pendant l'évaluation du mismatch, et ne faire le contrôle d'état non réaliste qu'en fin de
+   calcul.
+
+Cumulées, les pistes 1 à 3 permettraient de viser 45 à 50 s, donc la parité ou presque avec
+lightsim2grid (46,6 s avec violations). Une machine plus stable serait nécessaire pour mesurer ces
+gains de façon fiable.
+
+**Hors de ce périmètre :**
+
+- **Calculs en natif.** Faire ces calculs en C++ via JNI, comme lightsim2grid, irait plus loin,
+  mais c'est un autre projet.
+- **Montée en charge multi-thread.** Avec 4 threads, OLF ralentit d'un facteur ≈ 2 par thread,
+  contre ≈ 1,2 pour LS2G. Le GC est négligeable (0,65 s) ; la cause est la contention mémoire, avec
+  des structures objet bien plus volumineuses. À reprendre après les pistes ci-dessus.
+- **Configuration par défaut.** Les basculements PV↔PQ de la boucle des limites réactives changent
+  encore la structure : l'équation de consigne V est remplacée par l'équation Q. Une extension du
+  mode fantôme, avec « échange » d'équation sur la même variable diagonale, permettrait de
+  l'éviter.
 
 ## Essai : sauvegarde d'état vectorisée
 
@@ -312,6 +339,8 @@ Configurations :
 | `default` | paramètres par défaut |
 | suffixe `_count` | compte les appels KLU |
 | `-Dexclude=…` ou `-Donly=…` | filtre les contingences |
+| `-Dolf.networkState.checkIncrementalRestore=true` | vérifie chaque restauration incrémentale |
+| `-Dolf.networkState.noIncrementalRestore=true` | force la restauration complète |
 
 ## Commits
 
@@ -329,5 +358,6 @@ Configurations :
 | `e9d03e8` | Mise à jour partielle du vecteur des cibles |
 | `c14ffe2` | `isNeeded` et contrôle d'état réaliste moins chers |
 | `839ae4a` | Restauration moins chère (bus slack exclus, boucle unique sur les générateurs) |
+| `780015f` | Patch powsybl-math-native amélioré et comparaison mono-thread |
 | `839ae9b` | Sauvegarde/restauration d'état vectorisée (tableaux plats) |
 | `42d48c3` | Restauration d'état incrémentale (setters qui marquent les éléments modifiés) |
