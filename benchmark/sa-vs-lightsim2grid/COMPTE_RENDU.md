@@ -388,6 +388,30 @@ Aucun gain : la refactorisation creuse de KLU est limitée par les accès mémoi
 d'instructions. La compilation de référence reste celle du script `math-native/build.sh` (elle redonne une
 bibliothèque binairement identique).
 
+## Resynchronisation avec `main` (55 commits, powsybl-core 7.4.0)
+
+Fusion de `origin/main` (pas de rebase, la branche étant publiée). 8 fichiers en conflit, résolus en gardant
+les deux évolutions (détails dans le message du commit de fusion). Les nouveaux tests de `main` ont révélé
+trois problèmes, corrigés :
+
+- **Sensibilités des termes vectorisés avec la numérotation alignée** (vrai bug de la branche). Le réglage
+  secondaire de tension de `main` réactive maintenant un bus contrôleur juste avant de calculer ses
+  sensibilités. Avec la numérotation alignée, cela renumérote les variables, et les numéros de ligne gardés par
+  `AcBranchVector` n'étaient rafraîchis qu'à la mise à jour d'état suivante : sensibilités fausses, point
+  pilote à 14,95 kV au lieu de 15. Les numéros de ligne sont maintenant rafraîchis avant chaque calcul de
+  sensibilité.
+- **Restauration d'état incrémentale.** Restaurer un HVDC peut modifier la consigne de ses stations de
+  conversion ; le suivi démarre maintenant avant cette étape. Le contrôle de débogage
+  (`-Dolf.networkState.checkIncrementalRestore=true`) compare désormais l'état final à celui d'une restauration
+  complète. Toute la suite de tests passe avec ce contrôle actif (passé via `JAVA_TOOL_OPTIONS` :
+  `-DargLine` n'est pas transmis aux tests par la configuration Surefire de ce projet).
+- **Régression de performance de `main`** (#1430, taps de déphaseurs dans les résultats) : la capacité de
+  contrôle de phase était relue dans IIDM pour toutes les branches après chaque contingence (≈ 3,5 s sur ce
+  cas). Elle est maintenant calculée une fois.
+
+Tests : 1636, 0 échec. Benchmark NR pur, 1 thread, A/B dans le même créneau : 36,3 / 34,0 s avant la fusion,
+35,7 / 34,4 s après, mêmes statuts et mêmes 1 021 140 violations.
+
 ## Reproduire
 
 Bibliothèque native améliorée :
@@ -442,3 +466,5 @@ Configurations :
 | `152470c` | Pré-filtre vectorisé de la détection des violations |
 | `7258e33` | Variables en tableau plat, compensateurs avec automate en cache |
 | `322440b` | Données de branche entrelacées pour le calcul des transits |
+| `6649ec0` | Fusion de `origin/main` (55 commits) et corrections révélées par ses tests |
+| `e56e435` | Capacité de contrôle de phase des branches calculée une fois |
