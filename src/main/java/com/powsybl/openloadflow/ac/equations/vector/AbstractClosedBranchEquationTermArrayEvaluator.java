@@ -32,6 +32,9 @@ public abstract class AbstractClosedBranchEquationTermArrayEvaluator extends Abs
     @Override
     public double calculateSensi(int branchNum, DenseMatrix dx, int column) {
         Objects.requireNonNull(dx);
+        // variable rows may have changed since last state update (for instance equations activated just before the
+        // sensitivity calculation, with an index renumbering)
+        branchVector.updateVariables();
         double dph1 = dx.get(branchVector.ph1Row[branchNum], column);
         double dph2 = dx.get(branchVector.ph2Row[branchNum], column);
         double dv1 = dx.get(branchVector.v1Row[branchNum], column);

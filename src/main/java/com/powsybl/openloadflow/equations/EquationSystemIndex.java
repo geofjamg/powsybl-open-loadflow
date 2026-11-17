@@ -102,6 +102,10 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
         listeners.forEach(EquationSystemIndexListener::onEquationIndexOrderChanged);
     }
 
+    private void notifyEquationTermConstantsChanged() {
+        listeners.forEach(EquationSystemIndexListener::onEquationTermConstantsChanged);
+    }
+
     private void updateEquationColumns(Collection<SingleEquation<V, E>> singleEquations, Collection<EquationArray<V, E>> equationArrays) {
         for (SingleEquation<V, E> equation : singleEquations) {
             equation.setColumn(columnCount++);
@@ -758,6 +762,11 @@ public class EquationSystemIndex<V extends Enum<V> & Quantity, E extends Enum<E>
                     throw new IllegalStateException("Event type not supported: " + eventType);
             }
         }
+    }
+
+    @Override
+    public void onEquationTermConstantsChange() {
+        notifyEquationTermConstantsChanged();
     }
 
     public List<SingleEquation<V, E>> getSortedSingleEquationsToSolve() {

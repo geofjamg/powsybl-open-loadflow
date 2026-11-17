@@ -16,6 +16,7 @@ import com.powsybl.openloadflow.util.Evaluable;
 import net.jafama.FastMath;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Vectorized view of the branches and variables related to branches.
@@ -210,6 +211,21 @@ public class AcBranchVector {
 
     public int getSize() {
         return disabled.length;
+    }
+
+    private Runnable variablesUpdater = () -> { };
+
+    void setVariablesUpdater(Runnable variablesUpdater) {
+        this.variablesUpdater = Objects.requireNonNull(variablesUpdater);
+    }
+
+    /**
+     * Ensure variable rows are up to date with the equation system index. They are otherwise only updated at next
+     * state update, whereas an index change (equation activation, renumbering) can happen in between, for instance
+     * before a sensitivity calculation.
+     */
+    public void updateVariables() {
+        variablesUpdater.run();
     }
 
     // Interleaved copy of the inputs of the flows computation (constant parameters and variable rows), so that the

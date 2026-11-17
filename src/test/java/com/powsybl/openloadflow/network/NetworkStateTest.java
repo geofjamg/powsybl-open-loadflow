@@ -10,12 +10,14 @@ package com.powsybl.openloadflow.network;
 import com.powsybl.iidm.network.Network;
 import com.powsybl.iidm.network.test.EurostagTutorialExample1Factory;
 import com.powsybl.openloadflow.network.impl.LfNetworkLoaderImpl;
+import com.powsybl.openloadflow.network.impl.Networks;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * @author Geoffroy Jamgotchian {@literal <geoffroy.jamgotchian at rte-france.com>}
+ * @author Gautier Bureau {@literal <gautier.bureau at rte-france.com>}
  */
 class NetworkStateTest {
 
@@ -80,5 +82,20 @@ class NetworkStateTest {
         otherNetworkState.restore();
         assertEquals(genTargetP + 2, gen.getTargetP());
         assertTrue(tracker.isTracking(otherNetworkState));
+    }
+
+    @Test
+    void restoreDoesNotShareTheSavedLoadDisablingStatus() {
+        LfNetwork lfNetwork = Networks.load(EurostagTutorialExample1Factory.create(), new MostMeshedSlackBusSelector()).getFirst();
+        LfLoad load = lfNetwork.getBuses().stream()
+                .flatMap(b -> b.getLoads().stream())
+                .filter(l -> l.getOriginalIds().contains("LOAD"))
+                .findFirst().orElseThrow();
+        NetworkState state = NetworkState.save(lfNetwork);
+        for (int contingency = 1; contingency <= 2; contingency++) {
+            load.setOriginalLoadDisabled("LOAD", true);
+            state.restore();
+            assertFalse(load.isOriginalLoadDisabled("LOAD"), "original load still disabled after restore " + contingency);
+        }
     }
 }

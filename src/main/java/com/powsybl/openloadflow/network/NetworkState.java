@@ -82,30 +82,43 @@ public class NetworkState {
             // only buses and branches modified since last save or restore of this state
             busStates.restore(tracker);
             branchStates.restore(tracker);
+            // tracking starts before restoring other elements: restoring them can modify buses (for instance an HVDC
+            // restore resets the target active power of its converter stations), modifications that must be tracked
+            startTracking();
+            restoreOthers();
             if (CHECK_INCREMENTAL_RESTORE) {
                 checkIncrementalRestore();
             }
         } else if (busStates.isCompatible(network.getBuses()) && branchStates.isCompatible(network.getBranches())) {
-            busStates.restore();
-            branchStates.restore();
+            restoreFully();
         } else {
             // buses or branches have been added or removed, cannot track changes anymore
             busStates.restore();
             branchStates.restore();
             network.getStateChangeTracker().invalidate();
             restoreOthers();
-            return;
         }
-        restoreOthers();
-        startTracking();
     }
 
+    private void restoreFully() {
+        busStates.restore();
+        branchStates.restore();
+        startTracking();
+        restoreOthers();
+    }
+
+    /**
+     * Check that the incremental restore gives the same buses and branches state as a full restore (debug).
+     */
     private void checkIncrementalRestore() {
-        String busDifference = busStates.findDifference(BusesVectorState.save(network.getBuses()));
-        String branchDifference = branchStates.findDifference(BranchesVectorState.save(network.getBranches()));
+        BusesVectorState incrementalBusStates = BusesVectorState.save(network.getBuses());
+        BranchesVectorState incrementalBranchStates = BranchesVectorState.save(network.getBranches());
+        restoreFully();
+        String busDifference = BusesVectorState.save(network.getBuses()).findDifference(incrementalBusStates);
+        String branchDifference = BranchesVectorState.save(network.getBranches()).findDifference(incrementalBranchStates);
         if (busDifference != null || branchDifference != null) {
-            throw new IllegalStateException("Incremental network state restore failed: "
-                    + (busDifference != null ? busDifference : branchDifference) + " has not been restored");
+            throw new IllegalStateException("Incremental network state restore differs from full restore: "
+                    + (busDifference != null ? busDifference : branchDifference));
         }
     }
 

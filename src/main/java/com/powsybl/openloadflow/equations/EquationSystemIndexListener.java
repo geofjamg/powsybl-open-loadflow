@@ -48,4 +48,9 @@ public interface EquationSystemIndexListener<V extends Enum<V> & Quantity, E ext
     default void onGhostChange() {
         // nothing to do by default
     }
+
+    /**
+     * Called when a constant has been modified in the equation terms (e.g. R or X of branches after tap position change)
+     */
+    void onEquationTermConstantsChanged();
 }

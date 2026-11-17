@@ -15,11 +15,12 @@ import com.powsybl.openloadflow.network.LfBranch;
 import com.powsybl.openloadflow.network.LfBus;
 import com.powsybl.openloadflow.network.LfElement;
 import com.powsybl.openloadflow.network.LfNetwork;
+import com.powsybl.openloadflow.network.LimitScalingManager;
 import com.powsybl.openloadflow.util.ArrayEvaluable;
 import com.powsybl.openloadflow.util.Evaluable;
 import com.powsybl.openloadflow.util.PerUnit;
 import com.powsybl.security.*;
-import com.powsybl.security.limitreduction.LimitReduction;
+import com.powsybl.security.limitscaling.LimitScaling;
 import net.jafama.FastMath;
 import org.apache.commons.lang3.function.TriFunction;
 import org.apache.commons.lang3.tuple.Pair;
@@ -39,23 +40,23 @@ public class LimitViolationManager {
 
     private final LimitViolationManager reference;
 
-    private final LimitReductionManager limitReductionManager;
+    private final LimitScalingManager limitScalingManager;
 
     private SecurityAnalysisParameters.IncreasedViolationsParameters parameters;
 
     private final Map<Pair<Object, String>, LimitViolation> violations = new LinkedHashMap<>(); // All limit violations indexed by network element and OperationalLimitsGroup (if it exists)
 
-    public LimitViolationManager(LimitViolationManager reference, List<LimitReduction> limitReductions,
+    public LimitViolationManager(LimitViolationManager reference, List<LimitScaling> limitScalings,
                                  SecurityAnalysisParameters.IncreasedViolationsParameters parameters) {
         this.reference = reference;
         if (reference != null) {
             this.parameters = Objects.requireNonNull(parameters);
         }
-        this.limitReductionManager = LimitReductionManager.create(limitReductions);
+        this.limitScalingManager = LimitScalingManager.create(limitScalings);
     }
 
-    public LimitViolationManager(List<LimitReduction> limitReductions) {
-        this(null, limitReductions, null);
+    public LimitViolationManager(List<LimitScaling> limitScalings) {
+        this(null, limitScalings, null);
     }
 
     public List<LimitViolation> getLimitViolations() {
@@ -141,9 +142,9 @@ public class LimitViolationManager {
         List<LfBranch.LfLimit> limits = limitsGroup.getSortedLimits();
         String operationalLimitsGroupId = limitsGroup.getOperationalLimitsGroupId();
         double i = iGetter.apply(branch).eval();
-        for (LfBranch.LfLimit temporaryLimit : limits) {
-            if (i > temporaryLimit.getReducedValue()) {
-                addBranchLimitViolation(createLimitViolation(branch, operationalLimitsGroupId, temporaryLimit, LimitViolationType.CURRENT, PerUnit.ib(bus.getNominalV()), i, side));
+        for (LfBranch.LfLimit limit : limits) {
+            if (i > limit.getScaledValue()) {
+                addBranchLimitViolation(createLimitViolation(branch, operationalLimitsGroupId, limit, LimitViolationType.CURRENT, PerUnit.ib(bus.getNominalV()), i, side));
                 break;
             }
         }
@@ -153,9 +154,9 @@ public class LimitViolationManager {
         List<LfBranch.LfLimit> limits = limitsGroup.getSortedLimits();
         String operationalLimitsGroupId = limitsGroup.getOperationalLimitsGroupId();
         double p = pGetter.apply(branch).eval();
-        for (LfBranch.LfLimit temporaryLimit : limits) {
-            if (Math.abs(p) > temporaryLimit.getReducedValue()) {
-                addBranchLimitViolation(createLimitViolation(branch, operationalLimitsGroupId, temporaryLimit, LimitViolationType.ACTIVE_POWER, PerUnit.SB, p, side));
+        for (LfBranch.LfLimit limit : limits) {
+            if (Math.abs(p) > limit.getScaledValue()) {
+                addBranchLimitViolation(createLimitViolation(branch, operationalLimitsGroupId, limit, LimitViolationType.ACTIVE_POWER, PerUnit.SB, p, side));
                 break;
             }
         }
@@ -167,9 +168,9 @@ public class LimitViolationManager {
         //Apparent power is not relevant for fictitious branches and may be NaN
         double s = sGetter.applyAsDouble(branch);
         if (!Double.isNaN(s)) {
-            for (LfBranch.LfLimit temporaryLimit : limits) {
-                if (s > temporaryLimit.getReducedValue()) {
-                    addBranchLimitViolation(createLimitViolation(branch, operationalLimitsGroupId, temporaryLimit, LimitViolationType.APPARENT_POWER, PerUnit.SB, s, side));
+            for (LfBranch.LfLimit limit : limits) {
+                if (s > limit.getScaledValue()) {
+                    addBranchLimitViolation(createLimitViolation(branch, operationalLimitsGroupId, limit, LimitViolationType.APPARENT_POWER, PerUnit.SB, s, side));
                     break;
                 }
             }
@@ -177,7 +178,7 @@ public class LimitViolationManager {
     }
 
     /**
-     * A branch side with at least one limit, with its limit groups and the smallest reduced limit value of each
+     * A branch side with at least one limit, with its limit groups and the smallest scaled limit value of each
      * limit type: a violation can only exist if the value is above it, so that the detailed detection is only run in
      * that case.
      */
@@ -299,24 +300,24 @@ public class LimitViolationManager {
     // cache of the monitored branch sides, shared with managers using this one as reference
     private MonitoredBranchSides monitoredBranchSides;
 
-    private static double minReducedValue(List<LfBranch.LfLimitsGroup> limitsGroups) {
+    private static double minScaledValue(List<LfBranch.LfLimitsGroup> limitsGroups) {
         double min = Double.POSITIVE_INFINITY;
         for (LfBranch.LfLimitsGroup limitsGroup : limitsGroups) {
             for (LfBranch.LfLimit limit : limitsGroup.getSortedLimits()) {
-                min = Math.min(min, limit.getReducedValue());
+                min = Math.min(min, limit.getScaledValue());
             }
         }
         return min;
     }
 
     private void addMonitoredBranchSide(List<MonitoredBranchSide> sides, LfBranch branch, LfBus bus, TwoSides side,
-                                        TriFunction<LfBranch, LimitType, LimitReductionManager, List<LfBranch.LfLimitsGroup>> limitsGetter) {
-        List<LfBranch.LfLimitsGroup> current = limitsGetter.apply(branch, LimitType.CURRENT, limitReductionManager);
-        List<LfBranch.LfLimitsGroup> activePower = limitsGetter.apply(branch, LimitType.ACTIVE_POWER, limitReductionManager);
-        List<LfBranch.LfLimitsGroup> apparentPower = limitsGetter.apply(branch, LimitType.APPARENT_POWER, limitReductionManager);
+                                        TriFunction<LfBranch, LimitType, LimitScalingManager, List<LfBranch.LfLimitsGroup>> limitsGetter) {
+        List<LfBranch.LfLimitsGroup> current = limitsGetter.apply(branch, LimitType.CURRENT, limitScalingManager);
+        List<LfBranch.LfLimitsGroup> activePower = limitsGetter.apply(branch, LimitType.ACTIVE_POWER, limitScalingManager);
+        List<LfBranch.LfLimitsGroup> apparentPower = limitsGetter.apply(branch, LimitType.APPARENT_POWER, limitScalingManager);
         if (!current.isEmpty() || !activePower.isEmpty() || !apparentPower.isEmpty()) {
-            sides.add(new MonitoredBranchSide(branch, bus, side, current, minReducedValue(current),
-                    activePower, minReducedValue(activePower), apparentPower, minReducedValue(apparentPower)));
+            sides.add(new MonitoredBranchSide(branch, bus, side, current, minScaledValue(current),
+                    activePower, minScaledValue(activePower), apparentPower, minScaledValue(apparentPower)));
         }
     }
 
@@ -368,17 +369,17 @@ public class LimitViolationManager {
         }
     }
 
-    private static LimitViolation createLimitViolation(LfBranch branch, String operationalLimitsGroupId, LfBranch.LfLimit temporaryLimit,
+    private static LimitViolation createLimitViolation(LfBranch branch, String operationalLimitsGroupId, LfBranch.LfLimit limit,
                                                        LimitViolationType type, double scale, double value,
                                                        TwoSides side) {
         return new LimitViolationBuilder()
                 .subject(branch.getMainOriginalId())
                 .operationalLimitsGroupId(operationalLimitsGroupId)
                 .type(type)
-                .limitName(temporaryLimit.getName())
-                .duration(temporaryLimit.getAcceptableDuration())
-                .limit(temporaryLimit.getValue() * scale)
-                .reduction(temporaryLimit.getReduction())
+                .limitName(limit.getName())
+                .duration(limit.getAcceptableDuration())
+                .limit(limit.getValue() * scale)
+                .scaling(limit.getScaling())
                 .value(value * scale)
                 .side(branch.getOriginalSide().orElse(side.toThreeSides()))
                 .build();

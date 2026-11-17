@@ -303,12 +303,20 @@ public final class BusesVectorState {
             }
         }
         for (int g = 0; g < generators.length; g++) {
-            if (Double.compare(generatorTargetP[g], other.generatorTargetP[g]) != 0
-                    || Double.compare(generatorInitialTargetP[g], other.generatorInitialTargetP[g]) != 0
-                    || generatorParticipating[g] != other.generatorParticipating[g]
-                    || generatorDisabled[g] != other.generatorDisabled[g]
-                    || generatorControlType[g] != other.generatorControlType[g]) {
-                return "generator " + generators[g].getId();
+            String field = null;
+            if (Double.compare(generatorTargetP[g], other.generatorTargetP[g]) != 0) {
+                field = "targetP";
+            } else if (Double.compare(generatorInitialTargetP[g], other.generatorInitialTargetP[g]) != 0) {
+                field = "initialTargetP";
+            } else if (generatorParticipating[g] != other.generatorParticipating[g]) {
+                field = "participating";
+            } else if (generatorDisabled[g] != other.generatorDisabled[g]) {
+                field = "disabled";
+            } else if (generatorControlType[g] != other.generatorControlType[g]) {
+                field = "generatorControlType";
+            }
+            if (field != null) {
+                return "generator " + generators[g].getId() + " (" + field + ")";
             }
         }
         for (int l = 0; l < loads.length; l++) {

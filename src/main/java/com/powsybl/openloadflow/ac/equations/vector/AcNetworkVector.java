@@ -57,6 +57,7 @@ public class AcNetworkVector extends AbstractLfNetworkListener
         this.equationSystem = Objects.requireNonNull(equationSystem);
         busVector = new AcBusVector(network.getBuses());
         branchVector = new AcBranchVector(network.getBranches(), creationParameters);
+        branchVector.setVariablesUpdater(this::updateVariables);
     }
 
     public AcBusVector getBusVector() {
@@ -342,12 +343,14 @@ public class AcNetworkVector extends AbstractLfNetworkListener
     }
 
     @Override
-    public void onTapPositionChange(LfBranch branch, int oldPosition, int newPosition) {
+    public void onTapPositionChange(LfBranch branch, int oldPosition, int newPosition, boolean modifiedTapPosition) {
         onBranchChange(branch.getNum());
         PiModel piModel = branch.getPiModel();
 
-        double y = piModel.getY();
-        branchVector.y[branch.getNum()] = y;
+        if (modifiedTapPosition) {
+            double y = piModel.getY();
+            branchVector.y[branch.getNum()] = y;
+        }
         double ksi = piModel.getKsi();
         var w = new DoubleWrapper();
         branchVector.ksi[branch.getNum()] = ksi;
@@ -407,6 +410,12 @@ public class AcNetworkVector extends AbstractLfNetworkListener
     public void onEquationIndexOrderChanged() {
         // variable rows may be aligned on equation columns, so they might have changed
         variablesInvalid = true;
+        invalidateSnapshot();
+    }
+
+    @Override
+    public void onEquationTermConstantsChanged() {
+        // constants of the flows computation may have changed: flows snapshot cannot be reused
         invalidateSnapshot();
     }
 

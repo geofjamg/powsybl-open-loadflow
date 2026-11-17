@@ -26,10 +26,10 @@ import com.powsybl.openloadflow.lf.outerloop.config.AbstractAcOuterLoopConfig;
 import com.powsybl.openloadflow.lf.outerloop.config.AcOuterLoopConfig;
 import com.powsybl.openloadflow.lf.outerloop.config.DefaultAcOuterLoopConfig;
 import com.powsybl.openloadflow.lf.outerloop.config.ExplicitAcOuterLoopConfig;
+import com.powsybl.openloadflow.lf.util.LfReports;
 import com.powsybl.openloadflow.network.*;
 import com.powsybl.openloadflow.network.util.PreviousValueVoltageInitializer;
 import com.powsybl.openloadflow.sa.extensions.ContingencyLoadFlowParameters;
-import com.powsybl.openloadflow.util.Reports;
 import com.powsybl.security.PostContingencyComputationStatus;
 import com.powsybl.security.monitor.StateMonitor;
 
@@ -53,7 +53,7 @@ public class AcSecurityAnalysis extends AbstractSecurityAnalysis<AcVariableType,
 
     @Override
     protected ReportNode createSaRootReportNode() {
-        return Reports.createAcSecurityAnalysis(reportNode, network.getId());
+        return LfReports.createAcSecurityAnalysis(reportNode, network.getId());
     }
 
     @Override

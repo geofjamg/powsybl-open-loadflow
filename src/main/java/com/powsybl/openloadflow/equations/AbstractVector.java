@@ -62,6 +62,11 @@ public abstract class AbstractVector<V extends Enum<V> & Quantity, E extends Enu
         public void onGhostChange() {
             onGhostColumnsChange();
         }
+
+        @Override
+        public void onEquationTermConstantsChanged() {
+            // nothing to do
+        }
     };
 
     /**
